@@ -1,10 +1,7 @@
 # lunchmoney transactions to ledger file
 from __future__ import annotations
 import datetime
-import re
 import os
-from typing import List, Optional
-import asyncio
 
 import click
 
@@ -17,10 +14,8 @@ class Lm2LedgerError(Exception):
     """ Base class for exceptions for this program """
     pass
 
+
 class LunchMoneyTokenError(Lm2LedgerError):
-    # def __init__(self, expression, message):
-    #     self.expression = expression
-    #     self.message = message
     pass
 
 
@@ -42,7 +37,7 @@ class Date(click.ParamType):
 
     def _try_to_convert_date(self, value, format):
         try:
-            return datetime.strptime(value, format).date()
+            return datetime.datetime.strptime(value, format).date()
         except ValueError:
             return None
 
@@ -81,24 +76,26 @@ def cli(ledger_file, days, lmtoken):#, date_start, date_end):
     params = {
         "start_date": start_date.isoformat(),
         "end_date": end_date.isoformat(),
-        # "limit": 10,
     }
-    print('Getting Lunch Money data...')
+    click.echo('Getting Lunch Money data...')
     lm_txns = lm.get_transactions(params)
-    print(f'Found {len(lm_txns)} transactions between {start_date} and {end_date}')
+    click.echo(f'Found {len(lm_txns)} transactions between {start_date} and {end_date}')
 
-    print('Parsing ledger file...')
+    # create LedgerTransaction objects from lunchmoney transactions
+    new_transactions = [lm.to_ledger(t) for t in lm_txns]
+
+    click.echo('Parsing ledger file...')
     ledger = Ledger(ledger_file)
     ledger.parse()
 
     # update ledger file with lunchmoney transactions
-    # create Transaction object from lunchmoney transactions
-    for t in lm_txns:
-        ledger_tx = lm.to_ledger(t)
-        ledger.transactions[t.id] = ledger_tx
+    ledger.update(new_transactions)
 
-    print('Done')
+    click.echo('Done')
 
 
 if __name__ == "__main__":
+#     ledger_file = 'personal.ledger'
+#     days = 120
+#     lmtoken = os.getenv('LUNCHMONEY_ACCESS_TOKEN')
     cli()

@@ -3,7 +3,7 @@ from __future__ import annotations
 import datetime
 import re
 from typing import List, Optional
-import asyncio
+import tempfile
 
 from pydantic import BaseModel
 
@@ -28,6 +28,36 @@ class LedgerTransaction(BaseModel):
     note: str = ''
     tags: Optional[List[LedgerTransactionTag]]
     lm_id: Optional[int]
+
+    def status_char(self):
+        if self.status == 'cleared':
+            ch = '*'
+        elif self.status == 'pending':
+            ch = '!'
+        else:
+            ch = ''
+        return ch
+
+    def write(self):
+        """ Create string for writing to ledger file """
+        indent = ' ' * 4
+        lines = [f'{self.date.isoformat()} {self.status_char()} {self.payee}']
+        if self.note:
+            if hasattr(self.note, '__len__'):
+                for note_line in self.note.splitlines():
+                    lines += [f'{indent}; {note_line}']
+            else:
+                lines += [f'{indent}; {self.note}']
+        for item in sorted(self.items, key=lambda x: -x.amount):
+            amount_string = f'$ {item.amount:,.2f}'
+            if item.amount > 0:
+                account_string = f'{indent}{item.account:40}  {amount_string:>8s}'
+            else:
+                account_string = f'{indent}{item.account:40}  '
+            lines += [account_string]
+        line_string = '\n'.join(lines)
+        return line_string
+
 
 
 class Ledger:
@@ -94,7 +124,7 @@ class Ledger:
                 elif not line:
                     break
 
-    def save_transaction(self, t: Transaction):
+    def save_transaction(self, t: LedgerTransaction):
         """
         Save transaction by lunch money id
         """
@@ -178,4 +208,26 @@ class Ledger:
         amount = float(m[1].replace(',', ''))
         txn_item = LedgerTransactionItem(account=account, amount=amount)
         return txn_item
+
+    def update(self, ledger_transactions: List[LedgerTransaction]):
+        """
+        Update Ledger object with new transactions based on lunch money ID
+        """
+        for t in ledger_transactions:
+            self.transactions[t.lm_id] = t
+
+        # write to new temporary ledger file
+        with tempfile.NamedTemporaryFile(mode='r+') as f:
+            # first write the same header as before
+            f.writelines(self.raw_header)
+
+
+            # then iterate over the updated transactions in chronological order
+            for t in sorted(self.transactions.values(), key=lambda x: x.date):
+                f.write(t.write())
+                f.write('\n\n')
+
+            f.seek(0)
+            print(f.read())
+
 
