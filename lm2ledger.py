@@ -16,8 +16,6 @@ from lunchmoney import LunchMoney
 from ledger import Ledger
 from utils import datestr_to_date
 
-load_dotenv()
-
 
 class Date(click.ParamType):
     """
@@ -60,8 +58,9 @@ class Date(click.ParamType):
 @click.option('-d', '--days', type=click.IntRange(min=0), default=90, show_default=True)
 # @click.option('--start', 'date_start', type=Date('%Y-%m-%d'))
 # @click.option('--end', 'date_end', type=Date('%Y-%m-%d'))
-def main(ledger_file, days):#, date_start, date_end):
+def cli(ledger_file, days):#, date_start, date_end):
     """ Update last number of days of transactions from lunch money """
+    load_dotenv(__name__)
     lm_access_token = os.getenv("LUNCHMONEY_ACCESS_TOKEN")
     lm = LunchMoney(lm_access_token)
     end_date = datetime.date.today()
@@ -89,4 +88,4 @@ def main(ledger_file, days):#, date_start, date_end):
 
 
 if __name__ == "__main__":
-    main()
+    cli()
