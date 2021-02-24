@@ -6,15 +6,22 @@ import os
 from typing import List, Optional
 import asyncio
 
-from dotenv import load_dotenv
 import click
-# from tqdm import tqdm
-from pydantic import BaseModel
-import aiohttp
 
 from lunchmoney import LunchMoney
 from ledger import Ledger
 from utils import datestr_to_date
+
+
+class Lm2LedgerError(Exception):
+    """ Base class for exceptions for this program """
+    pass
+
+class LunchMoneyTokenError(Lm2LedgerError):
+    # def __init__(self, expression, message):
+    #     self.expression = expression
+    #     self.message = message
+    pass
 
 
 class Date(click.ParamType):
@@ -56,13 +63,19 @@ class Date(click.ParamType):
 @click.command()
 @click.option('-f', '--file', 'ledger_file', type=click.Path(), default='personal.ledger', show_default=True)
 @click.option('-d', '--days', type=click.IntRange(min=0), default=90, show_default=True)
+@click.option('--lmtoken', type=str, default='')
 # @click.option('--start', 'date_start', type=Date('%Y-%m-%d'))
 # @click.option('--end', 'date_end', type=Date('%Y-%m-%d'))
-def cli(ledger_file, days):#, date_start, date_end):
+def cli(ledger_file, days, lmtoken):#, date_start, date_end):
     """ Update last number of days of transactions from lunch money """
-    load_dotenv(__name__)
-    lm_access_token = os.getenv("LUNCHMONEY_ACCESS_TOKEN")
-    lm = LunchMoney(lm_access_token)
+    if not lmtoken:
+        try:
+            lmtoken = os.environ["LUNCHMONEY_ACCESS_TOKEN"]
+        except KeyError:
+            msg = "'LUNCHMONEY_ACCESS_TOKEN' environment variable not set"
+            raise LunchMoneyTokenError(msg)
+
+    lm = LunchMoney(lmtoken)
     end_date = datetime.date.today()
     start_date = end_date - datetime.timedelta(days=days)
     params = {
