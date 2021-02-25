@@ -56,19 +56,18 @@ class Date(click.ParamType):
 
 
 @click.command()
-@click.option('-f', '--file', 'ledger_file', type=click.Path(), default='personal.ledger', show_default=True)
+@click.option('-f', '--file', 'ledger_file', type=click.Path(), required=True)
 @click.option('-d', '--days', type=click.IntRange(min=0), default=90, show_default=True)
+@click.option('-o', '--output', 'output_file', type=click.Path())
 @click.option('--lmtoken', type=str, default='')
 # @click.option('--start', 'date_start', type=Date('%Y-%m-%d'))
 # @click.option('--end', 'date_end', type=Date('%Y-%m-%d'))
-def cli(ledger_file, days, lmtoken):#, date_start, date_end):
+def cli(ledger_file, days, output_file, lmtoken):#, date_start, date_end):
     """ Update last number of days of transactions from lunch money """
-    if not lmtoken:
-        try:
-            lmtoken = os.environ["LUNCHMONEY_ACCESS_TOKEN"]
-        except KeyError:
-            msg = "'LUNCHMONEY_ACCESS_TOKEN' environment variable not set"
-            raise LunchMoneyTokenError(msg)
+    if (not lmtoken) and not (lmtoken := os.getenv("LUNCHMONEY_ACCESS_TOKEN")):
+        breakpoint()
+        msg = "'LUNCHMONEY_ACCESS_TOKEN' environment variable not set"
+        raise LunchMoneyTokenError(msg)
 
     lm = LunchMoney(lmtoken)
     end_date = datetime.date.today()
@@ -89,7 +88,9 @@ def cli(ledger_file, days, lmtoken):#, date_start, date_end):
     ledger.parse()
 
     # update ledger file with lunchmoney transactions
-    ledger.update(new_transactions)
+    if not output_file:
+        output_file = ledger_file
+    ledger.write(new_transactions, output_file)
 
     click.echo('Done')
 

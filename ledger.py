@@ -4,6 +4,8 @@ import datetime
 import re
 from typing import List, Optional
 import tempfile
+import pathlib
+import shutil
 
 from pydantic import BaseModel
 
@@ -17,6 +19,9 @@ class LedgerTransactionItem(BaseModel):
 
 class LedgerTransactionTag(BaseModel):
     name: str
+
+    def write(self):
+        return f':{self.name}:'
 
 
 class LedgerTransaction(BaseModel):
@@ -41,22 +46,32 @@ class LedgerTransaction(BaseModel):
     def write(self):
         """ Create string for writing to ledger file """
         indent = ' ' * 4
-        lines = [f'{self.date.isoformat()} {self.status_char()} {self.payee}']
+        lines = f'{self.date.isoformat()} {self.status_char()} {self.payee}\n'
+        # write note
         if self.note:
             if hasattr(self.note, '__len__'):
                 for note_line in self.note.splitlines():
-                    lines += [f'{indent}; {note_line}']
+                    lines += f'{indent}; {note_line}\n'
             else:
-                lines += [f'{indent}; {self.note}']
+                lines += f'{indent}; {self.note}\n'
+        # write tags
+        if len(self.tags) > 0:
+            tag_strs = [f':{tag.name}:' for tag in self.tags]
+            lines += f'{indent}; ' + ', '.join(tag_strs) + '\n'
+
+        # write lunchmoney id
+        if self.lm_id:
+            lines += f'{indent}; lm_id: {self.lm_id}\n'
+
+        # write items
         for item in sorted(self.items, key=lambda x: -x.amount):
             amount_string = f'$ {item.amount:,.2f}'
             if item.amount > 0:
-                account_string = f'{indent}{item.account:40}  {amount_string:>8s}'
+                account_string = f'{indent}{item.account:40}  {amount_string:>8s}\n'
             else:
-                account_string = f'{indent}{item.account:40}  '
-            lines += [account_string]
-        line_string = '\n'.join(lines)
-        return line_string
+                account_string = f'{indent}{item.account:40}  \n'
+            lines += account_string
+        return lines
 
 
 
@@ -89,6 +104,9 @@ class Ledger:
         """
         Read ledger file and parse contents
         """
+        if not pathlib.Path(self.fname).exists():
+            print(f'Ledger file \'{self.fname}\' does not exist.')
+            return None
         self.gather_transactions()
         self.process_transactions()
 
@@ -161,6 +179,7 @@ class Ledger:
             'payee': payee,
             'status': status,
             'note': note,
+            'tags': [],
             'raw': ''.join(txn_lines)
         }
         # get transaction items
@@ -172,9 +191,9 @@ class Ledger:
                 # process comments
                 comment_data = self.process_transaction_comment(s[1])
                 if 'tags' in comment_data:
-                    txn_data['tags'].extend(comment_data['tags'])
+                    txn_data['tags'].append(comment_data['tags'])
                 if 'note' in comment_data:
-                    txn_data['note'] += "\n" + comment_data['note']
+                    txn_data['note'] += comment_data['note']
                 if 'lm_id' in comment_data:
                     txn_data['lm_id'] = comment_data['lm_id']
             else:
@@ -183,6 +202,9 @@ class Ledger:
                 txn_items.append(txn_item)
         txn_data.update({'items': txn_items})
         txn = LedgerTransaction(**txn_data)
+        if len(txn_items) <= 1:
+            msg = f"Less than two item entries for ledger transaction: {txn}"
+            raise Exception(msg)
         return txn
 
     def process_transaction_comment(self, comment_line):
@@ -202,7 +224,7 @@ class Ledger:
         (indented)  Liabilities:Chase Sapphire Visa     $ -388.19
         """
         # split accounts and amounts on double space and tabs
-        m = re.search(r"^\s*([a-zA-Z0-9:& ]+)( {2,}|\t)\s*", line_item)
+        m = re.search(r"^\s*([a-zA-Z0-9:& .]+)( {2,}|\t)\s*", line_item)
         account = m[1].rstrip()
         m = re.search(r"\$?(([-+]?\d{1,3}(\,\d{3})*|(\d+))(\.\d{2})?)", line_item)
         amount = float(m[1].replace(',', ''))
@@ -216,18 +238,28 @@ class Ledger:
         for t in ledger_transactions:
             self.transactions[t.lm_id] = t
 
+    def write(self,
+        ledger_transactions: List[LedgerTransaction],
+        output_file: str = ''
+    ):
+        self.update(ledger_transactions)
+
         # write to new temporary ledger file
         with tempfile.NamedTemporaryFile(mode='r+') as f:
             # first write the same header as before
             f.writelines(self.raw_header)
 
-
             # then iterate over the updated transactions in chronological order
             for t in sorted(self.transactions.values(), key=lambda x: x.date):
-                f.write(t.write())
-                f.write('\n\n')
+                f.write(t.write() + '\n')
 
             f.seek(0)
             print(f.read())
+
+            # write new updated transactions to output file
+            print('copy tmp file')
+            shutil.copy2(f.name, output_file)
+            print(f'copied to {output_file}')
+
 
 
