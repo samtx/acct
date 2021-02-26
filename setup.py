@@ -7,8 +7,7 @@ setup(
     python_requires='>=3.8',
     install_requires=[
         'Click',
-        'aiohttp',
-        'pydantic',
+        'httpx[http2]',
     ],
     entry_points={
         'console_scripts': [

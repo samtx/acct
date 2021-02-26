@@ -5,11 +5,10 @@ import re
 import os
 from typing import List, Optional
 import asyncio
+from dataclasses import dataclass, field
 
-from pydantic import BaseModel
-import aiohttp
+import httpx
 
-from utils import datestr_to_date
 from ledger import LedgerTransaction, LedgerTransactionItem, LedgerTransactionTag
 
 
@@ -18,40 +17,42 @@ def split_dict_by_id(data: List):
     return new_dict
 
 
-
-
-class LunchMoneyTag(BaseModel):
+@dataclass
+class LunchMoneyTag:
     id: int
     name: str
-    description: Optional[str] = None
+    description: Optional[str] = ''
 
 
-class LunchMoneyCategory(BaseModel):
+@dataclass
+class LunchMoneyCategory:
     id: int
     name: str
-    description: Optional[str]
     is_income: bool
     exclude_from_budget: bool
     exclude_from_totals: bool
     updated_at: str
     created_at: str
     is_group: bool
-    group_id: Optional[int]
+    description: Optional[str] = ''
+    group_id: Optional[int] = None
 
 
-class LunchMoneyAsset(BaseModel):
+@dataclass
+class LunchMoneyAsset:
     id: int
     type_name: str
-    subtype_name: Optional[str]
     name: str
     balance: str
     balance_as_of: str
     currency: str
-    institution_name: Optional[str]
     created_at: str
+    subtype_name: Optional[str] = ''
+    institution_name: Optional[str] = ''
 
 
-class LunchMoneyPlaidAccount(BaseModel):
+@dataclass
+class LunchMoneyPlaidAccount:
     id: int
     date_linked: str
     name: str
@@ -64,27 +65,27 @@ class LunchMoneyPlaidAccount(BaseModel):
     balance: str
     currency: str
     balance_last_update: str
-    limit: Optional[int]
+    limit: Optional[int] = None
 
 
-class LunchMoneyTransaction(BaseModel):
+@dataclass
+class LunchMoneyTransaction:
     id: int
     date: datetime.date
     payee: str
     amount: float
-    currency: str = 'usd'
-    category_id: int
     category: LunchMoneyCategory
     status: str
     is_group: bool
-    tags: Optional[List[LunchMoneyTag]] = []
-    asset: Optional[LunchMoneyAsset]
-    plaid_account: Optional[LunchMoneyPlaidAccount]
-    notes: Optional[str]
-    recurring_id: Optional[int]
-    group_id: Optional[int]
-    parent_id: Optional[int]
-    external_id: Optional[str]
+    currency: str = 'usd'
+    tags: Optional[List[LunchMoneyTag]] = field(default_factory=list)
+    asset: Optional[LunchMoneyAsset] = None
+    plaid_account: Optional[LunchMoneyPlaidAccount] = None
+    notes: Optional[str] = ''
+    recurring_id: Optional[int] = None
+    group_id: Optional[int] = None
+    parent_id: Optional[int] = None
+    external_id: Optional[str] = None
 
 
 
@@ -99,29 +100,35 @@ class LunchMoney:
         self.plaid_accounts = {}
 
     def get_transactions(self, params):
-        loop = asyncio.get_event_loop()
-        tasks = [
-            self.fetch('categories'),
-            self.fetch('assets'),
-            self.fetch('plaid_accounts'),
-            self.fetch('transactions', params),
-        ]
-        results = loop.run_until_complete(asyncio.gather(*tasks))
-        self.categories = self.json_to_pydantic(LunchMoneyCategory, results[0])
-        self.assets = self.json_to_pydantic(LunchMoneyAsset, results[1])
-        self.plaid_accounts = self.json_to_pydantic(LunchMoneyPlaidAccount, results[2])
+        cleared = params.pop('cleared')
+        results = self.fetch_lunch_money_data(params)
+        self.categories = self.json_to_dataclass(LunchMoneyCategory, results[0])
+        self.assets = self.json_to_dataclass(LunchMoneyAsset, results[1])
+        self.plaid_accounts = self.json_to_dataclass(LunchMoneyPlaidAccount, results[2])
         transactions = results[3]
-        uncategorized = LunchMoneyCategory.construct(id=-1, name='Uncategorized', is_income=False)
+        uncategorized = LunchMoneyCategory(
+            id=-1,
+            name='Uncategorized',
+            is_income=False,
+            exclude_from_budget=False,
+            exclude_from_totals=False,
+            updated_at=datetime.date.today().isoformat(),
+            created_at=datetime.date.today().isoformat(),
+            is_group=False
+        )
         # ignore group transactions
         transactions[:] = [t for t in transactions if not t['is_group']]
         for t in transactions:
-            if category_id := t['category_id']:
+            t['date'] = datetime.date.fromisoformat(t['date'])
+            t['amount'] = float(t['amount'])
+            if category_id := t.get('category_id'):
                 t['category'] = self.categories[t['category_id']]
             else:
-                t['category_id'] = -1
                 t['category'] = uncategorized
             if not t['tags']:
                 t['tags'] = []
+            else:
+                t['tags'] = [LunchMoneyTag(**tag) for tag in t['tags']]
             if asset_id := t['asset_id']:
                 t['asset'] = self.assets[asset_id]
             elif plaid_id := t['plaid_account_id']:
@@ -129,24 +136,39 @@ class LunchMoney:
             else:
                 msg = f"No account listed for transaction #{t['id']} - {t['payee']} on {t['date']} for {t['amount']} {t['currency']}"
                 raise Exception(msg)
+            del t['category_id']
+            del t['asset_id']
+            del t['plaid_account_id']
+
         lm_transactions = [LunchMoneyTransaction(**t) for t in transactions]
         return lm_transactions
 
-    def json_to_pydantic(self, model, data_list):
+    def json_to_dataclass(self, model, data_list):
         data = [model(**x) for x in data_list]
         new_dict = {d.id: d for d in data}
         return new_dict
 
-    async def fetch(self, resource: str, params: dict = None):
+    def fetch_lunch_money_data(self, params):
+        tasks = [
+            self.fetch_resource('categories'),
+            self.fetch_resource('assets'),
+            self.fetch_resource('plaid_accounts'),
+            self.fetch_resource('transactions', params),
+        ]
+        loop = asyncio.get_event_loop()
+        results = loop.run_until_complete(asyncio.gather(*tasks))
+        return results
+
+
+    async def fetch_resource(self, resource: str, params: dict = None):
         """
         async get request for transaction data
         """
         if params is None:
             params = {}
-        async with aiohttp.ClientSession() as session:
-            async with session.get(self.base_url + resource, headers=self.headers, params=params) as resp:
-                data = await resp.json()
-                return data[resource]
+        async with httpx.AsyncClient(http2=True, base_url=self.base_url, headers=self.headers) as client:
+            data = await client.get(resource, params=params)
+            return data.json()[resource]
 
     def to_ledger(self, t: LunchMoneyTransaction) -> LedgerTransaction:
         """

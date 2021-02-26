@@ -3,36 +3,44 @@ from __future__ import annotations
 import datetime
 import re
 from typing import List, Optional
-import tempfile
 import pathlib
-import shutil
-
-from pydantic import BaseModel
-
-from utils import datestr_to_date
+from dataclasses import dataclass, field
 
 
-class LedgerTransactionItem(BaseModel):
+def datestr_to_date(datestr):
+    """
+    Parse year/month/day string to datetime.date
+    """
+    datestr = datestr.replace('-', '/')
+    yr, mo, dy = datestr.split('/')
+    date = datetime.date(int(yr), int(mo), int(dy))
+    return date
+
+
+@dataclass
+class LedgerTransactionItem:
     account: str
-    amount: float
+    amount: Optional[float]
 
 
-class LedgerTransactionTag(BaseModel):
+@dataclass
+class LedgerTransactionTag:
     name: str
 
     def write(self):
         return f':{self.name}:'
 
 
-class LedgerTransaction(BaseModel):
+@dataclass
+class LedgerTransaction:
     date: datetime.date
     payee: str
-    items: List[LedgerTransactionItem]
+    items: List[LedgerTransactionItem] = field(default_factory=list)
     raw: str = ''  # raw strings from ledger file
     status: str = ''
     note: str = ''
-    tags: Optional[List[LedgerTransactionTag]]
-    lm_id: Optional[int]
+    tags: Optional[List[LedgerTransactionTag]] = field(default_factory=list)
+    lm_id: Optional[int] = None
 
     def status_char(self):
         if self.status == 'cleared':
@@ -79,7 +87,7 @@ class Ledger:
     """
     Ledger file operations
     """
-    comments = ';#%|*'
+    comments = ';#%|'
     commnets_regex = re.compile(r"\s*[;#%|\*]")
 
     def __init__(self, ledger_file):
@@ -87,7 +95,7 @@ class Ledger:
         self.transactions = dict()
         self.accounts = dict()
         self.transaction_regex = re.compile(r"^\d")
-        self.transaction_first_line_regex = re.compile(r"^(\d{4}[-\/]\d{2}[-\/]\d{2})\s+([*!])?\s*([\w\d. &:]*)\s*([;#%|*][ \w\d]*)?$")
+        self.transaction_first_line_regex = re.compile(r"^(\d{4}[-\/]\d{2}[-\/]\d{2})\s+([*!])?\s*([^;#%|]*)\s*([;#%|][\.\w\d]*)?$")
         self.lm_txn_regex = re.compile(r"(?<=[lm|LM|Lm]:)\s*\d+")
         # self.currency_regex = re.compile(r"\$(\d{1,3}(\,\d{3})*|(\d+))(\.\d{2})?")
         self.line_groups = []
@@ -227,7 +235,7 @@ class Ledger:
         m = re.search(r"^\s*([a-zA-Z0-9:& .]+)( {2,}|\t)\s*", line_item)
         account = m[1].rstrip()
         m = re.search(r"\$?(([-+]?\d{1,3}(\,\d{3})*|(\d+))(\.\d{2})?)", line_item)
-        amount = float(m[1].replace(',', ''))
+        amount = float(m[1].replace(',', '')) if m is not None else None
         txn_item = LedgerTransactionItem(account=account, amount=amount)
         return txn_item
 
@@ -238,28 +246,15 @@ class Ledger:
         for t in ledger_transactions:
             self.transactions[t.lm_id] = t
 
-    def write(self,
-        ledger_transactions: List[LedgerTransaction],
-        output_file: str = ''
-    ):
-        self.update(ledger_transactions)
-
-        # write to new temporary ledger file
-        with tempfile.NamedTemporaryFile(mode='r+') as f:
-            # first write the same header as before
-            f.writelines(self.raw_header)
-
-            # then iterate over the updated transactions in chronological order
-            for t in sorted(self.transactions.values(), key=lambda x: x.date):
-                f.write(t.write() + '\n')
-
-            f.seek(0)
-            print(f.read())
-
-            # write new updated transactions to output file
-            print('copy tmp file')
-            shutil.copy2(f.name, output_file)
-            print(f'copied to {output_file}')
-
-
+    def write(self):
+        output_str = self.raw_header
+        for t in sorted(self.transactions.values(), key=lambda x: x.date):
+            # only use transaction attributes if it is tied to a Lunch Money ID
+            # otherwise just write the raw strings
+            if t.lm_id:
+                transaction_string = t.write()
+            else:
+                transaction_string = t.raw
+            output_str += transaction_string + '\n'
+        return output_str
 
