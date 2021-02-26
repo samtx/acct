@@ -7,8 +7,8 @@ import tempfile
 
 import click
 
-from lunchmoney import LunchMoney
-from ledger import Ledger
+from .lunchmoney import LunchMoney
+from .ledger import Ledger
 
 
 class Lm2LedgerError(Exception):
@@ -167,7 +167,4 @@ def cli(ledger_file, output_file, token, token_stdin, cleared, verbose, **query_
 
 
 if __name__ == "__main__":
-#     ledger_file = 'personal.ledger'
-#     days = 120
-#     lmtoken = os.getenv('LUNCHMONEY_ACCESS_TOKEN')
     cli()

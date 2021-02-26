@@ -9,7 +9,7 @@ from dataclasses import dataclass, field
 
 import httpx
 
-from ledger import LedgerTransaction, LedgerTransactionItem, LedgerTransactionTag
+from .ledger import LedgerTransaction, LedgerTransactionItem, LedgerTransactionTag
 
 
 def split_dict_by_id(data: List):

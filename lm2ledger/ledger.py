@@ -54,7 +54,7 @@ class LedgerTransaction:
     def write(self):
         """ Create string for writing to ledger file """
         indent = ' ' * 4
-        lines = f'{self.date.isoformat()} {self.status_char()} {self.payee}\n'
+        lines = f'{self.date.strftime(r"%Y/%m/%d")} {self.status_char()} {self.payee}\n'
         # write note
         if self.note:
             if hasattr(self.note, '__len__'):
