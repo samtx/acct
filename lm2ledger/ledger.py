@@ -164,7 +164,6 @@ class Ledger:
         for txn in self.line_groups:
             t = self.process_transaction(txn)
             self.save_transaction(t)
-            # print(t.json(indent=2))
 
     def process_transaction(self, txn_lines):
         """

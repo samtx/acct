@@ -12,11 +12,6 @@ import httpx
 from .ledger import LedgerTransaction, LedgerTransactionItem, LedgerTransactionTag
 
 
-def split_dict_by_id(data: List):
-    new_dict = dict([(x.pop('id'), x) for x in data])
-    return new_dict
-
-
 @dataclass
 class LunchMoneyTag:
     id: int
@@ -88,8 +83,6 @@ class LunchMoneyTransaction:
     external_id: Optional[str] = None
 
 
-
-
 class LunchMoney:
     def __init__(self, lm_access_token):
         self.token = lm_access_token
@@ -159,7 +152,6 @@ class LunchMoney:
         results = loop.run_until_complete(asyncio.gather(*tasks))
         return results
 
-
     async def fetch_resource(self, resource: str, params: dict = None):
         """
         async get request for transaction data
@@ -197,8 +189,7 @@ class LunchMoney:
 
         elif t.category in ['Withdrawal', 'Payment, Transfer', 'Splitwise', 'Adjustment']:
             # treat transaction as transfer
-            # debit_account, credit_account = self.ledger_accounts_for_transfer(t)
-            pass
+            debit_account, credit_account = self.ledger_accounts_for_transfer(t)
 
         else:
             # treat transaction as expense
@@ -229,18 +220,39 @@ class LunchMoney:
             msg = f'Lunch Money plaid account type {plaid_account.type} not implemented'
             raise NotImplementedError(msg)
 
+    def lunchmoney_to_ledger_account(self, t: LunchMoneyTransaction):
+        """
+        Get ledger account from lunchmoney transaction
+        """
+        if asset := t.asset:
+            account = self.asset_to_ledger_account(asset)
+        elif plaid_account := t.plaid_account:
+            account = self.plaid_to_ledger_account(plaid_account)
+        else:
+            msg = f'No account listed for transaction {t}'
+            raise Exception(msg)
+        return account
+
     def ledger_accounts_for_transfer(self, t: LunchMoneyTransaction):
-        return (None, None)
+        """
+        Get ledger accounts for transfer or adjustment
+        """
+        acct_from_note_regex = re.compile(r'(?<=ledger: \").+(?=\")')
+        # credits are negative amounts, debits are positive
+        positive_account = self.lunchmoney_to_ledger_account(t)
+        s = acct_from_note_regex.search(t.note)
+        negative_account = s[0] if not s else ''
+        if t.amount > 0:
+            positive_account, negative_account = negative_account, positive_account
+        return (positive_account, negative_account)
+
 
     def ledger_accounts_for_income(self, t: LunchMoneyTransaction):
         """
         get ledger accounts for income transaction
         """
         negative_account = f'Income:{t.payee}'
-        if asset := t.asset:
-            positive_account = self.asset_to_ledger_account(asset)
-        elif plaid_account := t.plaid_account:
-            positive_account = self.plaid_to_ledger_account(plaid_account)
+        positive_account = self.lunchmoney_to_ledger_account(t)
         if 'Liabilities' in positive_account:
             msg = f'Income transaction cannot post to account {positive_account}'
             raise Exception(msg)
@@ -261,10 +273,6 @@ class LunchMoney:
         positive_account = ':'.join(expense_account_list)
 
         # get credit account
-        if asset := t.asset:
-            negative_account = self.asset_to_ledger_account(asset)
-        elif plaid_account := t.plaid_account:
-            negative_account = self.plaid_to_ledger_account(plaid_account)
-
+        negative_account = self.lunchmoney_to_ledger_account(t)
 
         return (positive_account, negative_account)
