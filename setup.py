@@ -1,9 +1,9 @@
 from setuptools import setup
 
 setup(
-    name='lm2ledger',
-    version='0.2',
-    py_modules=['lm2ledger'],
+    name='lunchmoney',
+    version='0.3',
+    packages=['lunchmoney'],
     python_requires='>=3.8',
     install_requires=[
         'Click',
@@ -11,7 +11,8 @@ setup(
     ],
     entry_points={
         'console_scripts': [
-            'lm2ledger=lm2ledger.cli:cli',
+            'lm2ledger=lunchmoney.cli:lm2ledger',
+            'lm=lunchmoney.cli:cli',
         ]
     },
 )
