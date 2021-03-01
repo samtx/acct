@@ -2,9 +2,14 @@
 from dataclasses import dataclass
 import datetime
 from typing import List
+import asyncio
 
 import httpx
 
+def isodatestr_to_date(isodatestr):
+    dt = datetime.datetime.fromisoformat(isodatestr)
+    date = datetime.date(dt.year, dt.month, dt.day)
+    return date
 
 @dataclass
 class SplitwiseGroup:
@@ -23,7 +28,9 @@ class SplitwiseExpenseBundle:
 
 @dataclass
 class SplitwiseCategory:
-    pass
+    id: int
+    name: str
+    parent_id: int = None
 
 
 @dataclass
@@ -39,7 +46,7 @@ class SplitwiseUser:
 
 @dataclass
 class SplitwiseRepayment:
-    from: SplitwiseUser
+    from_: SplitwiseUser
     to: SplitwiseUser
     amount: float
 
@@ -88,7 +95,7 @@ class Splitwise:
         # /get_user/{id}
         tasks = [
             self.fetch_resource('categories'),
-            self.fetch_resource('groups'),
+            # self.fetch_resource('groups'),
             self.fetch_resource('expenses', params),
         ]
         loop = asyncio.get_event_loop()
@@ -105,4 +112,56 @@ class Splitwise:
             data = await client.get(f'get_{resource}', params=params)
             return data.json()[resource]
 
+    def get_expenses(self, params):
+        results = self.fetch_data(params)
+        self.parse_categories(results[0])
+        # self.groups = self.json_to_dataclass(SplitwiseGroup, results[0])
+        self.parse_expenses(results[1])
+        for expense in self.expenses:
+            expense_id = expense.id
+            print(f'id={expense_id}, amount={expense.amount}')
+            a = 1
+
+    def parse_categories(self, category_data):
+        """
+        Take category data from splitwise api and convert it to local objects
+        """
+        for parent_category in category_data:
+            parent_id, name = int(parent_category['id']), parent_category['name']
+            self.categories[parent_id] = SplitwiseCategory(id=parent_id, name=name)
+            for subcategory in parent_category['subcategories']:
+                sub_id, name = int(subcategory['id']), subcategory['name']
+                self.categories[sub_id] = SplitwiseCategory(id=sub_id, name=name, parent_id=parent_id)
+
+    def parse_expenses(self, expenses):
+        """
+        Take expense data from splitwise api and convert it to local object
+        """
+        data_to_store = ['id', 'cost', 'details', 'payment']
+        for expense in expenses:
+            data = {
+                'id' : int(expense['id']),
+                'cost': float(expense['cost']),
+                'details': expense['details'],
+                'payment': bool(expense[]),
+                'date': datetime.date
+
+
+
+
+
+if __name__ == "__main__":
+    import os
+    api_key = os.getenv('SPLITWISE_API_KEY')
+    if not api_key:
+        raise Exception('splitwise api key not set')
+    splitwise = Splitwise(api_key)
+    start_date = datetime.date.today() - datetime.timedelta(days=60)
+    end_date = datetime.date.today()
+    params = {
+        'dated_after': start_date.isoformat(),
+        # 'dated_before'
+        'limit': 30,
+    }
+    splitwise.get_expenses(params)
 
