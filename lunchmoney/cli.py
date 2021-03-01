@@ -114,7 +114,7 @@ def write_output_to_file(file_name, output_string):
 @click.option('-b', '--begin', type=Date(), help='transactions beginning with date')
 @click.option('-e', '--end', type=Date(), help='transactions ending with date')
 @click.option('--range', 'range_', type=str, help='range of transaction dates')
-def cli(ledger_file, output_file, token, token_stdin, cleared, verbose, **query_kw):#, date_start, date_end):
+def lm2ledger(ledger_file, output_file, token, token_stdin, cleared, verbose, **query_kw):#, date_start, date_end):
     """Update your ledger file with transactions from Lunch Money
 
     """
@@ -164,6 +164,10 @@ def cli(ledger_file, output_file, token, token_stdin, cleared, verbose, **query_
     if verbose:
         out = output_file if output_file else 'stdout'
         click.echo(f'Updated transactions written to {out}')
+
+
+def cli():
+    pass
 
 
 if __name__ == "__main__":
