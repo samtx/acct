@@ -8,6 +8,7 @@ setup(
     install_requires=[
         'Click',
         'httpx[http2]',
+        'pydantic',
     ],
     entry_points={
         'console_scripts': [

@@ -138,12 +138,13 @@ def lm2ledger(ledger_file, output_file, token, token_stdin, cleared, verbose, **
     }
     if verbose:
         click.echo('Getting Lunch Money data...')
-    lm_txns = lm.get_transactions(params)
+    lm.get_transactions(params)
+    num_txns = len(lm.transactions)
     if verbose:
-        click.echo(f'Found {len(lm_txns)} transactions between {start_date} and {end_date}')
+        click.echo(f'Found {num_txns} transactions between {start_date} and {end_date}')
 
     # create LedgerTransaction objects from lunchmoney transactions
-    new_transactions = [lm.to_ledger(t) for t in lm_txns]
+    new_transactions = lm.to_ledger()
 
     if ledger_file:
         if verbose:

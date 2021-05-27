@@ -1,2 +1,2 @@
-from . import cli
-cli.cli()
+from .cli import cli
+cli()

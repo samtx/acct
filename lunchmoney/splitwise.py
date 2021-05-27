@@ -6,10 +6,8 @@ import asyncio
 
 import httpx
 
-def isodatestr_to_date(isodatestr):
-    dt = datetime.datetime.fromisoformat(isodatestr)
-    date = datetime.date(dt.year, dt.month, dt.day)
-    return date
+from .utils import isodatestr_to_date
+
 
 @dataclass
 class SplitwiseGroup:
@@ -91,11 +89,8 @@ class Splitwise:
         self.user_shares = {}
 
     def fetch_data(self, params):
-        # get user from id
-        # /get_user/{id}
         tasks = [
             self.fetch_resource('categories'),
-            # self.fetch_resource('groups'),
             self.fetch_resource('expenses', params),
         ]
         loop = asyncio.get_event_loop()
@@ -115,12 +110,10 @@ class Splitwise:
     def get_expenses(self, params):
         results = self.fetch_data(params)
         self.parse_categories(results[0])
-        # self.groups = self.json_to_dataclass(SplitwiseGroup, results[0])
         self.parse_expenses(results[1])
         for expense in self.expenses:
             expense_id = expense.id
             print(f'id={expense_id}, amount={expense.amount}')
-            a = 1
 
     def parse_categories(self, category_data):
         """
@@ -143,11 +136,10 @@ class Splitwise:
                 'id' : int(expense['id']),
                 'cost': float(expense['cost']),
                 'details': expense['details'],
-                'payment': bool(expense[]),
-                'date': datetime.date
-
-
-
+                'payment': bool(expense['payment']),
+                'date': isodatestr_to_date(expense['date']),
+                'description': expense['description'] if expense['description'] else '',
+            }
 
 
 if __name__ == "__main__":

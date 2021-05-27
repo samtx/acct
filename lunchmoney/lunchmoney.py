@@ -3,24 +3,23 @@ from __future__ import annotations
 import datetime
 import re
 import os
-from typing import List, Optional
+from typing import List, Optional, Union, Iterable, Callable
 import asyncio
-from dataclasses import dataclass, field
+import json
 
 import httpx
+from pydantic import BaseModel, Field
 
 from .ledger import LedgerTransaction, LedgerTransactionItem, LedgerTransactionTag
 
 
-@dataclass
-class LunchMoneyTag:
+class LunchMoneyTag(BaseModel):
     id: int
     name: str
     description: Optional[str] = ''
 
 
-@dataclass
-class LunchMoneyCategory:
+class LunchMoneyCategory(BaseModel):
     id: int
     name: str
     is_income: bool
@@ -33,8 +32,7 @@ class LunchMoneyCategory:
     group_id: Optional[int] = None
 
 
-@dataclass
-class LunchMoneyAsset:
+class LunchMoneyAsset(BaseModel):
     id: int
     type_name: str
     name: str
@@ -46,8 +44,7 @@ class LunchMoneyAsset:
     institution_name: Optional[str] = ''
 
 
-@dataclass
-class LunchMoneyPlaidAccount:
+class LunchMoneyPlaidAccount(BaseModel):
     id: int
     date_linked: str
     name: str
@@ -63,19 +60,14 @@ class LunchMoneyPlaidAccount:
     limit: Optional[int] = None
 
 
-@dataclass
-class LunchMoneyTransaction:
-    id: int
+class LunchMoneyTransactionBase(BaseModel):
     date: datetime.date
     payee: str
     amount: float
-    category: LunchMoneyCategory
-    status: str
-    is_group: bool
+    status: str = 'uncleared'
+    is_group: bool = False
     currency: str = 'usd'
-    tags: Optional[List[LunchMoneyTag]] = field(default_factory=list)
-    asset: Optional[LunchMoneyAsset] = None
-    plaid_account: Optional[LunchMoneyPlaidAccount] = None
+    tags: Optional[List[LunchMoneyTag]] = Field(default_factory=list)
     notes: Optional[str] = ''
     recurring_id: Optional[int] = None
     group_id: Optional[int] = None
@@ -83,21 +75,44 @@ class LunchMoneyTransaction:
     external_id: Optional[str] = None
 
 
+class LunchMoneyTransaction(LunchMoneyTransactionBase):
+    id: int
+    category: LunchMoneyCategory = None
+    asset: Optional[LunchMoneyAsset] = None
+    plaid_account: Optional[LunchMoneyPlaidAccount] = None
+
+
+class LunchMoneyTransactionInsert(LunchMoneyTransactionBase):
+    category_id: int = None
+    asset_id: int = None
+    plaid_account_id: int = None
+
+
+class LunchMoneyTransactionInsertParams(BaseModel):
+    transactions: List[LunchMoneyTransactionInsert]
+    apply_rules: bool = False
+    check_for_recurring: bool = False
+    debit_as_negative: bool = False
+
+
 class LunchMoney:
     def __init__(self, lm_access_token):
+        if not lm_access_token:
+            raise Exception('Lunch Money access token required')
         self.token = lm_access_token
         self.base_url = "https://dev.lunchmoney.app/v1/"
         self.headers = {"Authorization": f"Bearer {self.token}"}
         self.categories = {}
         self.assets = {}
         self.plaid_accounts = {}
+        self.transactions = []
 
     def get_transactions(self, params):
         cleared = params.pop('cleared')
         results = self.fetch_lunch_money_data(params)
-        self.categories = self.json_to_dataclass(LunchMoneyCategory, results[0])
-        self.assets = self.json_to_dataclass(LunchMoneyAsset, results[1])
-        self.plaid_accounts = self.json_to_dataclass(LunchMoneyPlaidAccount, results[2])
+        self.categories = self.json_to_model(LunchMoneyCategory, results[0])
+        self.assets = self.json_to_model(LunchMoneyAsset, results[1])
+        self.plaid_accounts = self.json_to_model(LunchMoneyPlaidAccount, results[2])
         transactions = results[3]
         uncategorized = LunchMoneyCategory(
             id=-1,
@@ -134,9 +149,9 @@ class LunchMoney:
             del t['plaid_account_id']
 
         lm_transactions = [LunchMoneyTransaction(**t) for t in transactions]
-        return lm_transactions
+        self.transactions = lm_transactions
 
-    def json_to_dataclass(self, model, data_list):
+    def json_to_model(self, model, data_list):
         data = [model(**x) for x in data_list]
         new_dict = {d.id: d for d in data}
         return new_dict
@@ -162,7 +177,15 @@ class LunchMoney:
             data = await client.get(resource, params=params)
             return data.json()[resource]
 
-    def to_ledger(self, t: LunchMoneyTransaction) -> LedgerTransaction:
+    def to_ledger(
+        self,
+    ) -> List[LedgerTransaction]:
+        ledger_txns = [
+            self._single_transaction_to_ledger(t) for t in self.transactions
+        ]
+        return ledger_txns
+
+    def _single_transaction_to_ledger(self, t: LedgerTransaction):
         """
         Convert LunchMoneyTransaction to LedgerTransaction object
 
@@ -182,19 +205,15 @@ class LunchMoney:
             'tags': [LedgerTransactionTag(name=tag.name) for tag in t.tags],
             'status': 'pending' if t.status == 'uncleared' else 'cleared'
         }
-
         if t.category.is_income:
             # treat transaction as income
             debit_account, credit_account = self.ledger_accounts_for_income(t)
-
         elif t.category in ['Withdrawal', 'Payment, Transfer', 'Splitwise', 'Adjustment']:
             # treat transaction as transfer
             debit_account, credit_account = self.ledger_accounts_for_transfer(t)
-
         else:
             # treat transaction as expense
             debit_account, credit_account = self.ledger_accounts_for_expense(t)
-
         data['items'] = [
             LedgerTransactionItem(account=debit_account, amount=t.amount),
             LedgerTransactionItem(account=credit_account, amount=-t.amount)
@@ -271,8 +290,24 @@ class LunchMoney:
             expense_account_list.insert(0, category.name)
         expense_account_list.insert(0, 'Expenses')
         positive_account = ':'.join(expense_account_list)
-
         # get credit account
         negative_account = self.lunchmoney_to_ledger_account(t)
-
         return (positive_account, negative_account)
+
+    def insert_transactions(
+        self,
+        transactions: Union[LunchMoneyTransaction, List[LunchMoneyTransaction]],
+        params: dict=None,
+    ):
+        if isinstance(transactions, LunchMoneyTransactionInsert):
+            transactions = [transactions]
+        if params is None:
+            params = {}
+        params['transactions'] = transactions
+        data = LunchMoneyTransactionInsertParams(**params).json()
+        headers = self.headers
+        headers['Content-Type'] = 'application/json'
+        res = httpx.post(
+            self.base_url + 'transactions', headers=headers, data=data
+        )
+        return res
