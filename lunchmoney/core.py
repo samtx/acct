@@ -10,7 +10,7 @@ import json
 import httpx
 from pydantic import BaseModel, Field
 
-from .ledger import LedgerTransaction, LedgerTransactionItem, LedgerTransactionTag
+from lunchmoney.ledger import LedgerTransaction, LedgerTransactionItem, LedgerTransactionTag
 
 
 class LunchMoneyTag(BaseModel):
@@ -130,7 +130,7 @@ class LunchMoney:
             t['date'] = datetime.date.fromisoformat(t['date'])
             t['amount'] = float(t['amount'])
             if category_id := t.get('category_id'):
-                t['category'] = self.categories[t['category_id']]
+                t['category'] = self.categories[category_id]
             else:
                 t['category'] = uncategorized
             if not t['tags']:

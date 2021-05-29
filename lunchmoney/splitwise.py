@@ -1,38 +1,32 @@
 # Add splitwise transactions to lunchmoney
-from dataclasses import dataclass
 import datetime
-from typing import List
+from typing import List, Dict, Union
 import asyncio
+from pydantic import BaseModel, Field, validator
 
 import httpx
 
-from .utils import isodatestr_to_date
+from lunchmoney.utils import isodatestr_to_date, none_to_empty_string
 
-
-@dataclass
-class SplitwiseGroup:
+class SplitwiseGroup(BaseModel):
     pass
 
 
-@dataclass
-class SplitwiseFriendship:
+class SplitwiseFriendship(BaseModel):
     pass
 
 
-@dataclass
-class SplitwiseExpenseBundle:
+class SplitwiseExpenseBundle(BaseModel):
     pass
 
 
-@dataclass
-class SplitwiseCategory:
+class SplitwiseCategory(BaseModel):
     id: int
     name: str
     parent_id: int = None
 
 
-@dataclass
-class SplitwiseUser:
+class SplitwiseUser(BaseModel):
     id: int
     first_name: str
     last_name: str
@@ -42,60 +36,70 @@ class SplitwiseUser:
         return f'{self.first_name} {self.last_name}'
 
 
-@dataclass
-class SplitwiseRepayment:
-    from_: SplitwiseUser
-    to: SplitwiseUser
+class SplitwiseRepayment(BaseModel):
+    to: int  # user id
     amount: float
+    from_: int = Field(..., alias='from')
 
 
-@dataclass
-class SplitwiseUserShare:
+class SplitwiseUserShare(BaseModel):
     user: SplitwiseUser
     paid_share: float
     owed_share: float
     net_balance: float
 
 
-@dataclass
-class SplitwiseExpense:
+class SplitwiseExpense(BaseModel):
     id: int
     cost: float
-    group: SplitwiseGroup
-    friendship: SplitwiseFriendship
     category: SplitwiseCategory
-    details: str
     date: datetime.date
     payment: bool
-    comments: str
-    users: List[SplitwiseUserShare]
-    repayments: List[SplitwiseRepayment]
+    details: str = ''
+    users: List[SplitwiseUserShare] = None
+    # repayments: List[SplitwiseRepayment] = None
     deleted_at: datetime.datetime = None
+
+    _validate_details = validator('details', allow_reuse=True)(none_to_empty_string)
+
+    # @validator('details')
+    # def none_to_empty_string(cls, value):
+    #     value = '' if not value else value
+    #     return str(value)
+
+
 
 
 class Splitwise:
-
     def __init__(self, api_key: str):
+        if not api_key:
+            raise Exception('Splitwise API Key required')
         self.api_key = api_key
         self.base_url = "https://secure.splitwise.com/api/v3.0/"
         self.headers = {'Authorization': f'Bearer {self.api_key}'}
-        self.groups = {}
+        self.current_user_id = None
         self.expenses = {}
         self.categories = {}
-        # self.friendships = {}
-        self.expense_bundles = {}
         self.users = {}
         self.repayments = {}
-        self.user_shares = {}
 
-    def fetch_data(self, params):
+    def fetch_splitwise_data(self, params):
         tasks = [
+            self.fetch_current_user_id(),
             self.fetch_resource('categories'),
             self.fetch_resource('expenses', params),
         ]
         loop = asyncio.get_event_loop()
         results = loop.run_until_complete(asyncio.gather(*tasks))
         return results
+
+    async def fetch_current_user_id(self):
+        """
+        async get request for current Splitwise user id
+        """
+        async with httpx.AsyncClient(http2=True, base_url=self.base_url, headers=self.headers) as client:
+            data = await client.get(f'get_current_user')
+            return data.json()['user']['id']
 
     async def fetch_resource(self, resource: str, params: dict = None):
         """
@@ -107,39 +111,47 @@ class Splitwise:
             data = await client.get(f'get_{resource}', params=params)
             return data.json()[resource]
 
-    def get_expenses(self, params):
-        results = self.fetch_data(params)
-        self.parse_categories(results[0])
-        self.parse_expenses(results[1])
-        for expense in self.expenses:
-            expense_id = expense.id
-            print(f'id={expense_id}, amount={expense.amount}')
+    # def json_to_model(self, model, data_list):
+    #     data = [model(**x) for x in data_list]
+    #     new_dict = {d.id: d for d in data}
+    #     return new_dict
 
-    def parse_categories(self, category_data):
+    def get_expenses(self, params):
+        results = self.fetch_splitwise_data(params)
+        self.current_user_id = int(results[0])
+        self.categories = self.categories_serializer(results[1])
+        self.expenses = self.expenses_serializer(results[2])
+
+    def categories_serializer(self, category_data):
         """
         Take category data from splitwise api and convert it to local objects
         """
+        categories = {}
         for parent_category in category_data:
             parent_id, name = int(parent_category['id']), parent_category['name']
-            self.categories[parent_id] = SplitwiseCategory(id=parent_id, name=name)
+            categories[parent_id] = SplitwiseCategory(id=parent_id, name=name)
             for subcategory in parent_category['subcategories']:
                 sub_id, name = int(subcategory['id']), subcategory['name']
-                self.categories[sub_id] = SplitwiseCategory(id=sub_id, name=name, parent_id=parent_id)
+                categories[sub_id] = SplitwiseCategory(id=sub_id, name=name, parent_id=parent_id)
+        return categories
 
-    def parse_expenses(self, expenses):
+    def expenses_serializer(self, expenses):
+        return [self.expense_serializer(expense) for expense in expenses]
+
+    def expense_serializer(self, expense):
         """
-        Take expense data from splitwise api and convert it to local object
+        Extract subset of data from splitwise api and convert it to local object
         """
-        data_to_store = ['id', 'cost', 'details', 'payment']
-        for expense in expenses:
-            data = {
-                'id' : int(expense['id']),
-                'cost': float(expense['cost']),
-                'details': expense['details'],
-                'payment': bool(expense['payment']),
-                'date': isodatestr_to_date(expense['date']),
-                'description': expense['description'] if expense['description'] else '',
-            }
+        data_keys = ['id', 'cost', 'category', 'date', 'payment', 'details', 'users', 'deleted_at']
+        expense['date'] = isodatestr_to_date(expense['date'])
+        # replace some values with empty strings if not set
+        for user in (u['user'] for u in expense['users']):
+            for key in ['first_name', 'last_name']:
+                user[key] = none_to_empty_string(user[key])
+        expense['details'] = none_to_empty_string(expense['details'])
+        expense_subset = {key: value for key, value in expense.items() if key in data_keys}
+        serialized_expense = SplitwiseExpense(**expense_subset)
+        return serialized_expense
 
 
 if __name__ == "__main__":
@@ -156,4 +168,7 @@ if __name__ == "__main__":
         'limit': 30,
     }
     splitwise.get_expenses(params)
+    e = splitwise.expenses
+    from pprint import pprint
+    pprint(splitwise.expenses)
 
