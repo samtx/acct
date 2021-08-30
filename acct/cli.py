@@ -1,5 +1,6 @@
 # lunchmoney transactions to ledger file
 from __future__ import annotations
+
 import datetime
 import os
 import shutil
@@ -7,8 +8,8 @@ import tempfile
 
 import click
 
-from .lunchmoney import LunchMoney
-from .ledger import Ledger
+from acct.ledger import Ledger
+from acct.lunchmoney import LunchMoney
 
 
 class Lm2LedgerError(Exception):

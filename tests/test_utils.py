@@ -1,8 +1,8 @@
 from datetime import date
 
 import pytest
-
 from lunchmoney.utils import isodatestr_to_date
+
 
 @pytest.mark.parametrize("input_str, output_date", [
     ('2020-12-09T03:03:49', date(2020, 12, 9)),

@@ -1,10 +1,11 @@
 # lunchmoney transactions to ledger file
 from __future__ import annotations
+
 import datetime
-import re
-from typing import List, Optional
 import pathlib
+import re
 from dataclasses import dataclass, field
+from typing import List, Optional
 
 
 def datestr_to_date(datestr):

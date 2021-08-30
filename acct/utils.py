@@ -1,9 +1,8 @@
-import re
 import datetime
+import re
 from functools import partial
 
 from pydantic import validator
-
 
 currency_re = re.compile(r"\$?\s(([-+]?\d{1,3}(\,\d{3})*|(\d+))(\.\d{2})?)")
 

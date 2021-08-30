@@ -1,6 +1,6 @@
 import pytest
-
 from lunchmoney.venmo import parse_venmo_currency_str
+
 
 @pytest.mark.parametrize("input_str, output_float", [
     ('"- $2,500.00"', -2500.0),

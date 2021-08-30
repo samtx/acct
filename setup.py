@@ -1,9 +1,9 @@
 from setuptools import setup
 
 setup(
-    name='lunchmoney',
-    version='0.3',
-    packages=['lunchmoney'],
+    name='acct',
+    version='0.1',
+    packages=['acct'],
     python_requires='>=3.8',
     install_requires=[
         'Click',
@@ -12,8 +12,7 @@ setup(
     ],
     entry_points={
         'console_scripts': [
-            'lm2ledger=lunchmoney.cli:lm2ledger',
-            'lm=lunchmoney.cli:cli',
+            'acct=acct.cli:cli',
         ]
     },
 )
