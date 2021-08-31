@@ -3,15 +3,14 @@ from __future__ import annotations
 
 import asyncio
 import datetime
-import json
-import os
 import re
-from typing import Callable, Iterable, List, Optional, Union
+from typing import List, Optional, Union
 
 import httpx
 from pydantic import BaseModel, Field
 
-from acct.ledger import LedgerTransaction, LedgerTransactionItem, LedgerTransactionTag
+from acct.ledger import (LedgerTransaction, LedgerTransactionItem,
+                         LedgerTransactionTag)
 
 
 class LunchMoneyTag(BaseModel):
@@ -109,7 +108,6 @@ class LunchMoney:
         self.transactions = []
 
     def get_transactions(self, params):
-        cleared = params.pop("cleared")
         results = self.fetch_lunch_money_data(params)
         self.categories = self.json_to_model(LunchMoneyCategory, results[0])
         self.assets = self.json_to_model(LunchMoneyAsset, results[1])

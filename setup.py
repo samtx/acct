@@ -13,6 +13,7 @@ setup(
     entry_points={
         "console_scripts": [
             "acct=acct.cli:cli",
+            "boa2ledger=acct.cli:boa2ledger",
         ]
     },
 )

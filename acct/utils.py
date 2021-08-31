@@ -15,14 +15,35 @@ def isodatestr_to_date(isodatestr: str):
     return date
 
 
+def datestr_to_date(datestr, mdy=False):
+    """
+    Parse year/month/day string to datetime.date
+
+    dmy = use the month/day/year order for parsing
+        otherwise user year/month/day
+    """
+    datestr = datestr.replace("-", "/")
+    n1, n2, n3 = datestr.split("/")
+    if mdy:
+        # swap
+        mo, dy, yr = n1, n2, n3
+    else:
+        yr, mo, dy = n1, n2, n3
+    date = datetime.date(int(yr), int(mo), int(dy))
+    return date
+
+
 def parse_currency_string(currency_str: str) -> float:
     """
     input: str, '$3,065.86'
     output: float, 3065.86
     """
     # extract number from string
-    currency_match = currency_re.search(currency_str)
-    number_str = currency_match.get(1)
+    if (currency_match := currency_re.search(currency_str)):
+        number_str = currency_match.get(1)
+    else:
+        currency_match = re.match(r"[-+]?\d+(\.\d{2})?", currency_str)
+        number_str = currency_match.get(1)
     # remove commas
     number_str = number_str.replace(",", "")
     number_float = float(number_str)
@@ -35,3 +56,16 @@ def none_to_empty_string(value) -> str:
     """
     value = "" if not value else value
     return str(value)
+
+
+# def simple_string_to_currency_float(currency_str: str) -> float:
+#     """
+#     input: str, '3065.86'
+#     output: float, 3065.86
+#     """
+#     # extract number from string
+#     # remove commas
+#     number_str = number_str.replace(",", "")
+#     amount = float(currency_str)
+#     number_float = float(number_str)
+#     return number_float

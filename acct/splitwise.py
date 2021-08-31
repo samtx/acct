@@ -1,7 +1,7 @@
 # Add splitwise transactions to lunchmoney
 import asyncio
 import datetime
-from typing import Dict, List, Union
+from typing import List
 
 import httpx
 from pydantic import BaseModel, Field, validator
@@ -99,7 +99,7 @@ class Splitwise:
         async with httpx.AsyncClient(
             http2=True, base_url=self.base_url, headers=self.headers
         ) as client:
-            data = await client.get(f"get_current_user")
+            data = await client.get("get_current_user")
             return data.json()["user"]["id"]
 
     async def fetch_resource(self, resource: str, params: dict = None):
