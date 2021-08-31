@@ -14,7 +14,7 @@ import click
 from acct.ledger import Ledger
 from acct.lunchmoney import LunchMoney
 from acct.utils import datestr_to_date, isodatestr_to_date, parse_currency_string
-from acct.boa import BOATransaction
+from acct.boa import BOATransaction, BankOfAmerica
 
 
 class Lm2LedgerError(Exception):
@@ -199,76 +199,9 @@ def lm2ledger(
 def boa2ledger(input_file, ledger_file, verbose):
     """Update your ledger file with transactions from Bank of America CSV"""
 
-    # loop through csv
-    data = defaultdict(list)
-    with open(input_file, "r", encoding="utf-8") as f:
-        line = f.readline()  # skip first line header for summary information
-
-        # Beginning balance
-        line = f.readline().strip()
-        line_items = line.split(',')
-        if begin_date_str := re.search(r"\d{1,2}/\d{1,2}/\d{2,4}", line_items[0]):
-            begin_date_str = begin_date_str[0]
-            data['begin date'] = datestr_to_date(begin_date_str, mdy=True)
-        else:
-            raise Exception('Invalid begin balance date string')
-        data['begin bal'] = float(line_items[2].strip('"'))
-
-        # Total credits
-        line = f.readline().strip()
-        line_items = line.split(',')
-        data['total credits'] = float(line_items[2].strip('"'))
-
-        # Total debits
-        line = f.readline().strip()
-        line_items = line.split(',')
-        data['total debits'] = float(line_items[2].strip('"'))
-
-        # Ending balance
-        line = f.readline().strip()
-        line_items = line.split(',')
-        if date_str := re.search(r"\d{1,2}/\d{1,2}/\d{2,4}", line_items[0]):
-            date_str = date_str[0]
-            data['end date'] = datestr_to_date(date_str, mdy=True)
-        else:
-            raise Exception('Invalid end balance date string')
-        data['end bal'] = float(line_items[2].strip('"'))
-
-        # skip next line
-        f.readline()
-
-        # begin csv data section
-        reader = csv.DictReader(f)
-        running_total = 0.0
-        for row in reader:
-            # skip lines that have no amounts
-            # e.g. the beginning balance line
-            if row['Amount'] == '':
-                continue
-
-            boa_txn = BOATransaction(
-                date=datestr_to_date(row['Date'], mdy=True),
-                description=row['Description'],
-                amount=float(row['Amount'].strip('"')),
-            )
-
-            # check if transaction is a duplicate, otherwise add to data set
-            date_ = boa_txn.date
-            if date_ in data:
-                if not (boa_txn in data[date_]):
-                    data[date_].append(boa_txn)
-                else:
-                    raise Exception(f"Duplicate transaction: {boa_txn}")
-
-            if verbose > 0:
-                click.echo(f"Added BoA trans. {boa_txn.date.strftime('%m/%d/%Y')}, ${boa_txn.amount:10.2f}, {boa_txn.description}")
-
-            running_total += boa_txn.amount
-
-        # check data integrity
-        if data['total credits'] + data['total debits'] - running_total > 1e-6:
-            raise Exception("Bank of America csv file amounts don't reconcile")
-
+    boa = BankOfAmerica()
+    data = boa.read_csv(input_file, verbose=verbose, printfn=click.echo)
+    # click.echo(data)
     # value = click.prompt('Enter Payee information', type=str)
     # journalentry = True
     # while journalentry:
