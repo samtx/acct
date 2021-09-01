@@ -7,6 +7,7 @@ import httpx
 from pydantic import BaseModel, Field, validator
 
 from acct.utils import isodatestr_to_date, none_to_empty_string
+from acct.base import PersonalFinanceClient
 
 
 class SplitwiseGroup(BaseModel):
@@ -69,7 +70,7 @@ class SplitwiseExpense(BaseModel):
     #     return str(value)
 
 
-class Splitwise:
+class Splitwise(PersonalFinanceClient):
     def __init__(self, api_key: str):
         if not api_key:
             raise Exception("Splitwise API Key required")

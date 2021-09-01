@@ -11,6 +11,7 @@ from pydantic import BaseModel, Field
 
 from acct.ledger import (LedgerTransaction, LedgerTransactionItem,
                          LedgerTransactionTag)
+from acct.base import PersonalFinanceClient
 
 
 class LunchMoneyTag(BaseModel):
@@ -95,7 +96,7 @@ class LunchMoneyTransactionInsertParams(BaseModel):
     debit_as_negative: bool = False
 
 
-class LunchMoney:
+class LunchMoney(PersonalFinanceClient):
     def __init__(self, lm_access_token):
         if not lm_access_token:
             raise Exception("Lunch Money access token required")

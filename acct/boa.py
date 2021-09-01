@@ -7,6 +7,7 @@ from pathlib import Path
 from typing import Callable, Union
 
 from acct.utils import datestr_to_date
+from acct.base import BankClient
 
 
 @dataclass
@@ -16,7 +17,7 @@ class BOATransaction:
     amount: float
 
 
-class BankOfAmerica:
+class BankOfAmerica(BankClient):
     """
     Class to hold data from Bank of America csv files
     """

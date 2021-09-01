@@ -8,6 +8,7 @@ from pydantic import BaseModel
 
 from acct.lunchmoney import LunchMoneyTransactionInsert
 from acct.utils import isodatestr_to_date
+from acct.base import BankClient
 
 # https://venmo.com/transaction-history/statement?startDate=11-30-2020&endDate=02-28-2021&profileId=1499956183564288593&accountType=personal
 
@@ -50,7 +51,7 @@ class VenmoTransaction(BaseModel):
     fee: float = 0.0
 
 
-class Venmo:
+class Venmo(BankClient):
     def __init__(self):
         self.transactions = {}
 

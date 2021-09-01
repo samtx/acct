@@ -12,6 +12,8 @@ from prompt_toolkit.history import InMemoryHistory
 from prompt_toolkit.auto_suggest import AutoSuggestFromHistory, AutoSuggest, Suggestion
 from prompt_toolkit.completion import Completer, Completion
 
+from acct.base import PersonalFinanceClient
+
 
 def datestr_to_date(datestr):
     """
@@ -101,7 +103,7 @@ class LedgerTransaction:
         return lines
 
 
-class Ledger:
+class Ledger(PersonalFinanceClient):
     """
     Ledger file operations
     """
