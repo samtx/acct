@@ -9,6 +9,7 @@ setup(
         "Click",
         "httpx[http2]",
         "pydantic",
+        "prompt_toolkit",
     ],
     entry_points={
         "console_scripts": [

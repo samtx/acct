@@ -4,8 +4,13 @@ from __future__ import annotations
 import datetime
 import pathlib
 import re
+from collections import defaultdict
 from dataclasses import dataclass, field
-from typing import List, Optional
+from typing import List, Optional, Iterable
+
+from prompt_toolkit.history import InMemoryHistory
+from prompt_toolkit.auto_suggest import AutoSuggestFromHistory, AutoSuggest, Suggestion
+from prompt_toolkit.completion import Completer, Completion
 
 
 def datestr_to_date(datestr):
@@ -27,9 +32,13 @@ class LedgerTransactionItem:
 @dataclass
 class LedgerTransactionTag:
     name: str
+    value: str = ''
 
     def write(self):
         return f":{self.name}:"
+
+    def write_item(self):
+        return f"{self.name}: {self.value}"
 
 
 @dataclass
@@ -65,8 +74,17 @@ class LedgerTransaction:
                 lines += f"{indent}; {self.note}\n"
         # write tags
         if len(self.tags) > 0:
-            tag_strs = [f":{tag.name}:" for tag in self.tags]
-            lines += f"{indent}; " + ", ".join(tag_strs) + "\n"
+            tags_no_value = []
+            tags_with_value = []
+            for tag in self.tags:
+                if tag.value:
+                    tags_with_value += f"{tag.name}: {tag.value}"
+                else:
+                    tags_no_value += f":{tag.name}:"
+            if len(tags_no_value) > 0:
+                lines += f"{indent}; " + ", ".join(tags_no_value) + "\n"
+            for tag in tags_with_value:
+                lines += f"{indent}; " + tag + "\n"
 
         # write lunchmoney id
         if self.lm_id:
@@ -94,7 +112,9 @@ class Ledger:
     def __init__(self, ledger_file):
         self.fname = ledger_file
         self.transactions = dict()
-        self.accounts = dict()
+        self.accounts = defaultdict(set)
+        self.payees = defaultdict(set)
+        self.dates = defaultdict(set)
         self.transaction_regex = re.compile(r"^\d")
         self.transaction_first_line_regex = re.compile(
             r"^(\d{4}[-\/]\d{2}[-\/]\d{2})\s+([*!])?\s*([^;#%|]*)\s*([;#%|][\.\w\d]*)?$"
@@ -161,8 +181,12 @@ class Ledger:
         """
         Save transaction by lunch money id
         """
-        _id = t.lm_id if t.lm_id else f"ledger-only-{self.incr()}"
+        _id = t.lm_id if t.lm_id else f"ledger-{self.incr()}"
         self.transactions[_id] = t
+        self.payees[t.payee].add(_id)
+        self.dates[t.date].add(_id)
+        for item in t.items:
+            self.accounts[item.account].add(_id)
 
     def process_transactions(self):
         """
@@ -190,7 +214,7 @@ class Ledger:
 
         txn_data = {
             "date": date,
-            "payee": payee,
+            "payee": payee.rstrip(),
             "status": status,
             "note": note,
             "tags": [],
@@ -257,9 +281,48 @@ class Ledger:
         for t in sorted(self.transactions.values(), key=lambda x: x.date):
             # only use transaction attributes if it is tied to a Lunch Money ID
             # otherwise just write the raw strings
-            if t.lm_id:
-                transaction_string = t.write()
-            else:
+            if t.raw:
                 transaction_string = t.raw
+            else:
+                transaction_string = t.write()
             output_str += transaction_string + "\n"
         return output_str
+
+
+
+class LedgerAccountCompleter(Completer):
+    """
+    autocompleter for prompt_toolkit
+    """
+    def __init__(self, ledger: Ledger):
+        self.ledger = ledger
+
+    def get_completions(self, document, complete_event) -> Iterable[Completion]:
+        current_str = document.get_word_before_cursor().lower()
+        for account in self.ledger.accounts.keys():
+            if account.lower().startswith(current_str):
+                yield Completion(
+                    account,
+                    start_position=-len(current_str),
+                )
+
+class LedgerPayeeAutoSuggest(AutoSuggest):
+    """
+    autosuggester for payees
+    """
+
+    def __init__(self, ledger):
+        self.ledger = ledger
+
+    def get_suggestion(self, buffer, document):
+
+        # Consider only the last line for the suggestion.
+        text = document.text.rsplit("\n", 1)[-1]
+
+        payees = list(self.ledger.payees.keys())
+        # Find first matching line in history.
+        for payee_str in reversed(payees):
+            if payee_str.startswith(text):
+                return Suggestion(payee_str[len(text) :])
+
+        return None

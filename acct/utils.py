@@ -39,7 +39,7 @@ def parse_currency_string(currency_str: str) -> float:
     output: float, 3065.86
     """
     # extract number from string
-    if (currency_match := currency_re.search(currency_str)):
+    if currency_match := currency_re.search(currency_str):
         number_str = currency_match.get(1)
     else:
         currency_match = re.match(r"[-+]?\d+(\.\d{2})?", currency_str)

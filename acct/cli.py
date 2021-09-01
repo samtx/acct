@@ -1,24 +1,36 @@
 # lunchmoney transactions to ledger file
 from __future__ import annotations
 
-import csv
 import datetime
 import os
-import re
+import pathlib
 import shutil
 import tempfile
-from collections import defaultdict
 
 import click
+from prompt_toolkit import PromptSession
+from prompt_toolkit.shortcuts import prompt
+from prompt_toolkit.history import InMemoryHistory
+from prompt_toolkit.auto_suggest import AutoSuggestFromHistory
+from prompt_toolkit.completion import WordCompleter
+from prompt_toolkit import print_formatted_text
 
-from acct.ledger import Ledger
-from acct.lunchmoney import LunchMoney
-from acct.utils import datestr_to_date, isodatestr_to_date, parse_currency_string
+
 from acct.boa import BOATransaction, BankOfAmerica
+from acct.ledger import (
+    Ledger,
+    LedgerAccountCompleter,
+    LedgerTransaction,
+    LedgerTransactionItem,
+    LedgerTransactionTag,
+    LedgerPayeeAutoSuggest
+)
+from acct.lunchmoney import LunchMoney
 
 
 class Lm2LedgerError(Exception):
     """Base class for exceptions for this program"""
+
     pass
 
 
@@ -197,10 +209,54 @@ def lm2ledger(
 @click.option("-f", "--file", "ledger_file", type=click.Path())
 @click.option("-v", "--verbose", count=True)
 def boa2ledger(input_file, ledger_file, verbose):
-    """Update your ledger file with transactions from Bank of America CSV"""
+    """Update your ledger file with transactions from Bank of America CSV file"""
 
     boa = BankOfAmerica()
-    data = boa.read_csv(input_file, verbose=verbose, printfn=click.echo)
+    boa.read_csv(input_file, verbose=verbose, printfn=click.echo)
+
+    # Create Ledger transactions from BOA transactions
+    ledger = Ledger(ledger_file)
+    ledger.parse()
+
+    completer = LedgerAccountCompleter(ledger)
+    payee_suggestor = LedgerPayeeAutoSuggest(ledger)
+    history = InMemoryHistory()
+
+    # Get ledger account for BOA account
+    boa_account = prompt('BoA Ledger Account > ', history=history, completer=completer, complete_while_typing=True)
+
+    ledger_transactions = []
+    print_formatted_text('Create new ledger transactions')
+    n_duplicate = 0
+    n_saved = 0
+    try:
+        for t in boa.transactions:
+            # check to see if transaction matches any existing ledger transaction
+            if res := BankOfAmerica.search_ledger_transactions(ledger, t, boa_account):
+                print_formatted_text("Transaction already exists in ledger.")
+                if verbose > 0:
+                    print_formatted_text(res)
+                print_formatted_text('Skipping...')
+                n_duplicate += 1
+                continue
+            ledger_t = prompt_to_create_ledger_transaction(
+                t, boa_account, history, completer, payee_suggestor
+            )
+            ledger.save_transaction(ledger_t)
+            n_saved += 1
+    finally:
+        f_path = pathlib.Path(ledger_file) if not isinstance(ledger_file, pathlib.Path) else ledger_file
+        fname = f_path.stem + '_tmp' + f_path.suffix
+        print_formatted_text(f'Saving temporary ledger file {fname}')
+        with open(fname, 'w', encoding='utf-8') as f:
+            f.write(ledger.write())
+
+    print_formatted_text(f'Saved {n_saved} new transactions. Skipped {n_duplicate} duplicates.')
+    import pprint
+    pprint.pprint(ledger_transactions)
+
+
+
     # click.echo(data)
     # value = click.prompt('Enter Payee information', type=str)
     # journalentry = True
@@ -208,11 +264,54 @@ def boa2ledger(input_file, ledger_file, verbose):
     #     account = click.prompt('Enter journal entry account string')
     #     amount = click.prompt('Enter journal entry amount in USD', type=float)
     #     comment = click.prompt('Enter journal entry comment')
+def prompt_to_create_ledger_transaction(
+    t: BOATransaction,
+    boa_account: str,
+    history,
+    completer,
+    payee_suggestor,
+    ) -> LedgerTransaction:
+    # check to see if transaction already exists in Ledger file
 
+    # create Ledger transaction from BOA transaction
+    # display BOA transaction details for reference
+    print_formatted_text(f'\nBoA tx. {t.date}  ${t.amount:9.2f},  {t.description}')
+    # create default journal entry for Bank of America account
+    ledger_item = LedgerTransactionItem(account=boa_account, amount=t.amount)
+    ledger_items = [ledger_item]
+    n_accounts = 1
+    print_formatted_text(f'{ledger_item.account}  $ {ledger_item.amount:.2f}')
+    payee = prompt('Payee > ', history=history, auto_suggest=payee_suggestor)
+    if not payee:
+        payee = t.description
+    note = prompt('Note > ', history=history)
+    while True:
+        account = prompt(f'Account {n_accounts+1} > ', history=history, completer=completer, complete_while_typing=True)
+        if not account and n_accounts >= 2:
+            break
+        if not account:
+            print_formatted_text('Must have at least two accounts')
+            continue
+        amount = prompt(f'Account {n_accounts+1} > $', history=history)
+        amount = float(amount.replace(',','')) if amount else None
+        ledger_item = LedgerTransactionItem(account=account, amount=amount)
+        ledger_items.append(ledger_item)
+        n_accounts += 1
+        if amount is None:
+            break
+    ledger_transaction = LedgerTransaction(
+        date=t.date,
+        payee=payee,
+        items=ledger_items,
+        note=note,
+        tags=[LedgerTransactionTag(name='boa',value=t.description)]
+    )
+    return ledger_transaction
 
 
 def cli():
     pass
+
 
 if __name__ == "__main__":
     boa2ledger()
