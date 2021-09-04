@@ -191,10 +191,12 @@ class Ledger:
         if not pathlib.Path(self.fname).exists():
             print(f"Ledger file '{self.fname}' does not exist.")
             return None
-        self.gather_transactions()
-        self.process_transactions()
+        self._gather_transactions()
+        for t_group in self.line_groups:
+            t = self._process_transaction(t_group)
+            self.save_transaction(t)
 
-    def gather_transactions(self):
+    def _gather_transactions(self):
         """
         Read ledger file and gather transactions as line groups
         """
@@ -273,15 +275,26 @@ class Ledger:
                 break
         return similar_transactions
 
-    def process_transactions(self):
+    def update(self, ledger_transactions: List[LedgerTransaction]):
         """
-        Process transaction text groups
+        Update Ledger object with new transactions based on lunch money ID
         """
-        for txn in self.line_groups:
-            t = self.process_transaction(txn)
-            self.save_transaction(t)
+        for t in ledger_transactions:
+            self.transactions[t.lm_id] = t
 
-    def process_transaction(self, txn_lines):
+    def write(self):
+        output_str = self.raw_header
+        for t in sorted(self.transactions.values(), key=lambda x: x.date):
+            # only use transaction attributes if it is tied to a Lunch Money ID
+            # otherwise just write the raw strings
+            if t.raw:
+                transaction_string = t.raw
+            else:
+                transaction_string = t.write()
+            output_str += transaction_string + "\n"
+        return output_str
+
+    def _process_transaction(self, txn_lines):
         """
         Process transaction from group of lines
         """
@@ -334,7 +347,7 @@ class Ledger:
             raise Exception(f"Less than two item entries for ledger transaction: {txn}")
         return txn
 
-    def parse_tag_without_values(self, matches: re.Match) -> List[LedgerTransactionTag]:
+    def _parse_tag_without_values(self, matches: re.Match) -> List[LedgerTransactionTag]:
         """
         check to see if tag comment matches
         ; :tag1:tag2:tag3:
@@ -345,7 +358,7 @@ class Ledger:
             tags.extend([LedgerTransactionTag(name=tag) for tag in match_tags])
         return tags
 
-    def parse_tag_with_values(self, matches: re.Match) -> LedgerTransactionTag:
+    def _parse_tag_with_values(self, matches: re.Match) -> LedgerTransactionTag:
         """
         check to see if tag comment matches
         ;  tagname: tagvalue
@@ -356,7 +369,7 @@ class Ledger:
         tag_name, tag_value = (item.strip() for item in tag_items)
         return LedgerTransactionTag(name=tag_name, value=tag_value)
 
-    def process_transaction_item(self, line_item):
+    def _process_transaction_item(self, line_item):
         """
         (indented)  Expenses:Food:Alcohol & Bars        $  388.19
         (indented)  Liabilities:Chase Sapphire Visa     $ -388.19
@@ -384,23 +397,3 @@ class Ledger:
             note = None
         txn_item = LedgerTransactionItem(account=account, amount=amount, note=note)
         return txn_item
-
-    def update(self, ledger_transactions: List[LedgerTransaction]):
-        """
-        Update Ledger object with new transactions based on lunch money ID
-        """
-        for t in ledger_transactions:
-            self.transactions[t.lm_id] = t
-
-    def write(self):
-        output_str = self.raw_header
-        for t in sorted(self.transactions.values(), key=lambda x: x.date):
-            # only use transaction attributes if it is tied to a Lunch Money ID
-            # otherwise just write the raw strings
-            if t.raw:
-                transaction_string = t.raw
-            else:
-                transaction_string = t.write()
-            output_str += transaction_string + "\n"
-        return output_str
-
