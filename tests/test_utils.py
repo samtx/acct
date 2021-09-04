@@ -1,7 +1,7 @@
 from datetime import date
 
 import pytest
-from lunchmoney.utils import isodatestr_to_date
+from acct.utils import isodatestr_to_date
 
 
 @pytest.mark.parametrize(

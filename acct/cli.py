@@ -8,23 +8,18 @@ import shutil
 import tempfile
 
 import click
-from prompt_toolkit import PromptSession
-from prompt_toolkit.shortcuts import prompt
+from prompt_toolkit.shortcuts import prompt, confirm
 from prompt_toolkit.history import InMemoryHistory
-from prompt_toolkit.auto_suggest import AutoSuggestFromHistory
-from prompt_toolkit.completion import WordCompleter
 from prompt_toolkit import print_formatted_text
 
 
-from acct.boa import BOATransaction, BankOfAmerica
+from acct.boa import BankOfAmerica
 from acct.ledger import (
     Ledger,
     LedgerAccountCompleter,
-    LedgerTransaction,
-    LedgerTransactionItem,
-    LedgerTransactionTag,
     LedgerPayeeAutoSuggest
 )
+from acct.prompts import prompt_to_create_ledger_transaction, prompt_to_create_new_ledger_transaction
 from acct.lunchmoney import LunchMoney
 
 
@@ -122,7 +117,72 @@ def write_output_to_file(file_name, output_string):
         shutil.copy2(f.name, file_name)
 
 
-@click.command()
+@click.group()
+@click.pass_context
+def cli(ctx):
+    pass
+
+
+@cli.command()
+@click.option("-f", "--file", "ledger_file", type=click.Path(), required=True)
+@click.option("-o", "--output", "output_file", type=click.Path())
+@click.option('--account', 'default_account', type=str, help='Default ledger account')
+def ledgeradd(ledger_file, output_file, default_account):
+    """
+    Interatively add transactions to ledger file
+    """
+    ledger = Ledger(ledger_file)
+    ledger.parse()
+    completer = LedgerAccountCompleter(ledger)
+    payee_suggestor = LedgerPayeeAutoSuggest(ledger)
+    history = InMemoryHistory()
+    n = 0
+
+    # check default account
+    if default_account and (default_account not in ledger.accounts):
+        print_formatted_text(f"Default account {default_account} is not in ledger file {ledger_file}")
+        default_account = prompt('Enter default account > ', history=history, completer=completer)
+        if not bool(default_account):
+            default_account = None
+    try:
+        while True:
+            print_formatted_text(f'Add transaction for file {ledger_file}')
+            t = prompt_to_create_new_ledger_transaction(
+                history=history,
+                completer=completer,
+                payee_suggestor=payee_suggestor,
+                default_account=default_account,
+            )
+            if not t:
+                print_formatted_text("Quitting...")
+                return
+            # Assume transaction is cleared
+            t.status = 'cleared'
+            # find similar transactions already entered
+            similar_t = ledger.find_similar_transactions(t)
+            if len(similar_t) > 0:
+                print_formatted_text('Similar transactions found:')
+                for tx in similar_t:
+                    print_formatted_text(f"{tx.write()}\n")
+                print_formatted_text(f"You entered\n{t.write()}")
+            else:
+                print_formatted_text(f"\n{t.write()}")
+            # double check transaction
+            yes = confirm(message='Add transaction? ')
+            if yes:
+                ledger.save_transaction(t)
+                n += 1
+                print_formatted_text("Saved transaction\n")
+    finally:
+        # write to file
+        print_formatted_text(f"Added {n} new transactions to ledger file")
+        if output_file is None:
+            output_file = ledger_file
+        write_output_to_file(output_file, ledger.write())
+
+
+
+@cli.command()
 @click.option("-f", "--file", "ledger_file", type=click.Path())
 @click.option("-o", "--output", "output_file", type=click.Path())
 @click.option("--token", type=str, help="Lunch Money Access Token")
@@ -204,7 +264,7 @@ def lm2ledger(
         click.echo(f"Updated transactions written to {out}")
 
 
-@click.command()
+@cli.command()
 @click.argument("input_file", type=click.Path())
 @click.option("-f", "--file", "ledger_file", type=click.Path())
 @click.option("-v", "--verbose", count=True)
@@ -256,7 +316,6 @@ def boa2ledger(input_file, ledger_file, verbose):
     pprint.pprint(ledger_transactions)
 
 
-
     # click.echo(data)
     # value = click.prompt('Enter Payee information', type=str)
     # journalentry = True
@@ -264,54 +323,7 @@ def boa2ledger(input_file, ledger_file, verbose):
     #     account = click.prompt('Enter journal entry account string')
     #     amount = click.prompt('Enter journal entry amount in USD', type=float)
     #     comment = click.prompt('Enter journal entry comment')
-def prompt_to_create_ledger_transaction(
-    t: BOATransaction,
-    boa_account: str,
-    history,
-    completer,
-    payee_suggestor,
-    ) -> LedgerTransaction:
-    # check to see if transaction already exists in Ledger file
-
-    # create Ledger transaction from BOA transaction
-    # display BOA transaction details for reference
-    print_formatted_text(f'\nBoA tx. {t.date}  ${t.amount:9.2f},  {t.description}')
-    # create default journal entry for Bank of America account
-    ledger_item = LedgerTransactionItem(account=boa_account, amount=t.amount)
-    ledger_items = [ledger_item]
-    n_accounts = 1
-    print_formatted_text(f'{ledger_item.account}  $ {ledger_item.amount:.2f}')
-    payee = prompt('Payee > ', history=history, auto_suggest=payee_suggestor)
-    if not payee:
-        payee = t.description
-    note = prompt('Note > ', history=history)
-    while True:
-        account = prompt(f'Account {n_accounts+1} > ', history=history, completer=completer, complete_while_typing=True)
-        if not account and n_accounts >= 2:
-            break
-        if not account:
-            print_formatted_text('Must have at least two accounts')
-            continue
-        amount = prompt(f'Account {n_accounts+1} > $', history=history)
-        amount = float(amount.replace(',','')) if amount else None
-        ledger_item = LedgerTransactionItem(account=account, amount=amount)
-        ledger_items.append(ledger_item)
-        n_accounts += 1
-        if amount is None:
-            break
-    ledger_transaction = LedgerTransaction(
-        date=t.date,
-        payee=payee,
-        items=ledger_items,
-        note=note,
-        tags=[LedgerTransactionTag(name='boa',value=t.description)]
-    )
-    return ledger_transaction
-
-
-def cli():
-    pass
 
 
 if __name__ == "__main__":
-    boa2ledger()
+    ledgeradd()

@@ -24,6 +24,8 @@ def datestr_to_date(datestr, mdy=False):
     """
     datestr = datestr.replace("-", "/")
     n1, n2, n3 = datestr.split("/")
+    if len(n3.strip()) == 4:
+        mdy = True
     if mdy:
         # swap
         mo, dy, yr = n1, n2, n3

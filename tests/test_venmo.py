@@ -1,5 +1,5 @@
 import pytest
-from lunchmoney.venmo import parse_venmo_currency_str
+from acct.venmo import parse_venmo_currency_str
 
 
 @pytest.mark.parametrize(
