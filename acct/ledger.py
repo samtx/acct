@@ -6,7 +6,7 @@ import pathlib
 import re
 from collections import defaultdict
 from dataclasses import dataclass, field
-from typing import List, Optional, Iterable
+from typing import List, NamedTuple, Optional, Iterable
 
 from prompt_toolkit.history import History, InMemoryHistory
 from prompt_toolkit.auto_suggest import AutoSuggestFromHistory, AutoSuggest, Suggestion
@@ -145,6 +145,13 @@ class LedgerPayeeAutoSuggest(AutoSuggest):
         return None
 
 
+class FirstLineTransactionGroup(NamedTuple):
+    date: datetime.date
+    status: str
+    payee: str
+    note: str
+
+
 class Ledger:
     """
     Ledger file operations
@@ -153,7 +160,9 @@ class Ledger:
     commnets_regex = re.compile(r"\s*[;#%|\*]")
     tag_without_value_regex = re.compile(r":[\w:]+:")
     tag_with_value_regex = re.compile(r"^[\w]+:\s?\w?[\w\s?!;'\"^$%&]*$")
-    transaction_first_line_regex = re.compile(r"^(\d{4}[-\/]\d{2}[-\/]\d{2})\s+([*! ])?([^;#%|]*)\s([;#%|].*)")
+    transaction_first_line_regex = re.compile(r"^(\d{4}[-\/]\d{2}[-\/]\d{2})\s+([*! ])?(.*)$")
+    payee_and_note_regex = re.compile(r"^(.*)(( {2,}|\t|\n|\r\n)([" + comments + r"])(.*))?$")
+
     lm_txn_regex = re.compile(r"(?<=[lm|LM|Lm]:)\s*\d+")
     transaction_regex = re.compile(r"^\d")
 
@@ -299,38 +308,27 @@ class Ledger:
         Process transaction from group of lines
         """
         # process first line
-        s = self.transaction_first_line_regex.search(txn_lines[0])
-        datestr, status_char, payee, note = s[1], s[2], s[3], s[4]
-        note = "" if not note else note
-        date = datestr_to_date(datestr)
-        if status_char == "*":
-            status = "cleared"
-        elif status_char == "!":
-            status = "pending"
-        else:
-            status = ""
-
+        res = self._parse_first_line_of_transaction_group(txn_lines[0])
         txn_data = {
-            "date": date,
-            "payee": payee.rstrip(),
-            "status": status,
-            "note": note,
+            "date": res.date,
+            "payee": res.payee,
+            "status": res.status,
+            "note": res.note,
             "tags": [],
             "raw": "".join(txn_lines),
         }
         # get transaction items
         txn_items = []
         for line in txn_lines[1:]:
-
             result = re.search(r"^\s+[" + self.comments + r"]\s*(.*)$", line)
             if (result) and (len(result.regs) >= 2):
                 # process comments
                 comment = result[1]
                 if matches := self.tag_with_value_regex.findall(comment):
-                    tag = self.parse_tag_with_values(matches)
+                    tag = self._parse_tag_with_values(matches)
                     txn_data['tags'].extend([tag])
                 elif matches := self.tag_without_value_regex.findall(comment):
-                    tags = self.parse_tag_without_values(matches)
+                    tags = self._parse_tag_without_values(matches)
                     txn_data['tags'].extend(tags)
                 elif lm_id := re.search(r"(?<=[lm|LM|Lm]:)\s*\d+", comment):
                     tag = LedgerTransactionTag(name='lm_id', value=int(lm_id[0]))
@@ -339,13 +337,42 @@ class Ledger:
                     txn_data['note'] += '\n' + comment.strip()
             else:
                 # process line item
-                txn_item = self.process_transaction_item(line)
+                txn_item = self._process_transaction_item(line)
                 txn_items.append(txn_item)
         txn_data.update({"items": txn_items})
         txn = LedgerTransaction(**txn_data)
         if len(txn_items) <= 1:
             raise Exception(f"Less than two item entries for ledger transaction: {txn}")
         return txn
+
+    def _parse_first_line_of_transaction_group(self, line: str) -> FirstLineTransactionGroup:
+        """
+        process first line
+        """
+        m = self.transaction_first_line_regex.search(line)
+        datestr, status_char, payee_and_note = m[1], m[2], m[3].strip()
+        # get transaction note if one exists
+        # check for 'hard separator' between payee and note comment character
+        if m2 := re.search(r"([\t\r\n]| {2,})", payee_and_note):
+            payee, note_with_comment_char = payee_and_note.split(m2[0])
+            # remove leading comment character
+            if m3 := re.search(r"["+ self.comments + r"]\s*(.*)", note_with_comment_char):
+                note = m3[1]
+            else:
+                note = ""
+        else:
+            payee, note = payee_and_note, ""
+
+        date = datestr_to_date(datestr)
+        if status_char == "*":
+            status = "cleared"
+        elif status_char == "!":
+            status = "pending"
+        else:
+            status = ""
+        payee, note = payee.strip(), note.strip()
+        res = FirstLineTransactionGroup(date=date, status=status, payee=payee, note=note)
+        return res
 
     def _parse_tag_without_values(self, matches: re.Match) -> List[LedgerTransactionTag]:
         """
