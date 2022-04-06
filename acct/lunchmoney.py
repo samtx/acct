@@ -9,8 +9,13 @@ from typing import List, Optional, Union
 import httpx
 from pydantic import BaseModel, Field
 
-# from acct.ledger import (LedgerTransaction, LedgerTransactionItem,
-#                          LedgerTransactionTag)
+from acct.ledger import (
+    LedgerTransaction,
+    LedgerTransactionPost,
+    LedgerTag,
+    LedgerNote,
+    LedgerStatus,
+)
 
 
 class LunchMoneyTag(BaseModel):
@@ -53,11 +58,11 @@ class LunchMoneyPlaidAccount(BaseModel):
     mask: str
     institution_name: str
     status: str
-    last_import: str
     balance: str
     currency: str
     balance_last_update: str
     limit: Optional[int] = None
+    last_import: str = None
 
 
 class LunchMoneyTransactionBase(BaseModel):
@@ -196,14 +201,14 @@ class LunchMoney:
             "Splitwise"
         """
         data = {
-            "lm_id": t.id,
             "date": t.date,
             "payee": t.payee,
-            "note": t.notes if t.notes is not None else "",
-            "items": [],
-            "tags": [LedgerTransactionTag(name=tag.name) for tag in t.tags],
-            "status": "pending" if t.status == "uncleared" else "cleared",
+            "posts": [],
+            "tags": [LedgerTag(name=tag.name) for tag in t.tags],
+            "status": LedgerStatus.PENDING if t.status == "uncleared" else LedgerStatus.CLEARED,
         }
+        data["notes"] = [LedgerNote(t.notes)] if t.notes is not None else []
+        data['tags'].append(LedgerTag('lm', str(t.id)))
         if t.category.is_income:
             # treat transaction as income
             debit_account, credit_account = self.ledger_accounts_for_income(t)
@@ -218,9 +223,9 @@ class LunchMoney:
         else:
             # treat transaction as expense
             debit_account, credit_account = self.ledger_accounts_for_expense(t)
-        data["items"] = [
-            LedgerTransactionItem(account=debit_account, amount=t.amount),
-            LedgerTransactionItem(account=credit_account, amount=-t.amount),
+        data["posts"] = [
+            LedgerTransactionPost(account=debit_account, amount=t.amount, date=data['date']),
+            LedgerTransactionPost(account=credit_account, amount=-t.amount, date=data['date']),
         ]
         ledger_transaction = LedgerTransaction(**data)
         return ledger_transaction

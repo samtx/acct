@@ -137,11 +137,11 @@ class LedgerTransactionPost(LedgerItem):
     amount: Optional[Decimal] = None
     commodity: str = 'USD'
 
-    def to_string(self, indent=4, max_account_len=40):
+    def to_string(self, indent=4, max_account_len=50):
         indent_str = ' ' * indent
         strlist = [f"\n{indent_str}{self.account:{max_account_len}s}    "]
         if self.amount is not None:
-            strlist.append(f"{self.amount:>16f} {self.commodity}")
+            strlist.append(f"{self.amount:>12.2f} {self.commodity}")
         for note in self.notes:
             strlist.append(note.to_string(indent*2))
         for tag in self.tags:

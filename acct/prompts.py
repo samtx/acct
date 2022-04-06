@@ -5,8 +5,8 @@ from prompt_toolkit import print_formatted_text
 from acct.boa import BOATransaction
 from acct.ledger import (
     LedgerTransaction,
-    LedgerTransactionItem,
-    LedgerTransactionTag,
+    LedgerTransactionPost,
+    LedgerTag,
 )
 from acct.utils import datestr_to_date
 
@@ -40,7 +40,7 @@ def prompt_to_create_new_ledger_transaction(
                 tag_items = tagstr.split(':')
                 tag_name = tag_items[0].strip()
                 tag_value = tag_items[1].strip() if len(tag_items) > 1 else None
-                ledger_tags.append(LedgerTransactionTag(name=tag_name, value=tag_value))
+                ledger_tags.append(LedgerTag(name=tag_name, value=tag_value))
             except:
                 print_formatted_text("Invalid tag")
         if not tagstr:
@@ -61,7 +61,7 @@ def prompt_to_create_new_ledger_transaction(
             continue
         amount = prompt(f'Account {len(ledger_items)+1} > $', history=history)
         amount = float(amount.replace(',','')) if amount else None
-        ledger_item = LedgerTransactionItem(account=account, amount=amount)
+        ledger_item = LedgerTransactionPost(account=account, amount=amount)
         ledger_items.append(ledger_item)
         if amount is None:
             break

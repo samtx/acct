@@ -14,11 +14,7 @@ from prompt_toolkit import print_formatted_text
 
 
 from acct.boa import BankOfAmerica
-from acct.ledger import (
-    Ledger,
-    LedgerAccountCompleter,
-    LedgerPayeeAutoSuggest
-)
+from acct.ledger import Ledger
 from acct.prompts import prompt_to_create_ledger_transaction, prompt_to_create_new_ledger_transaction
 from acct.lunchmoney import LunchMoney
 
@@ -249,9 +245,9 @@ def lm2ledger(
         ledger.update(
             new_transactions
         )  # update ledger file with lunchmoney transactions
-        output_string = ledger.write()
+        output_string = ledger.to_string()
     else:
-        output_string = "\n".join([t.write() for t in new_transactions])
+        output_string = "\n".join([t.to_string() for t in new_transactions])
 
     if output_file:
         write_output_to_file(output_file, output_string)
@@ -326,4 +322,4 @@ def boa2ledger(input_file, ledger_file, verbose):
 
 
 if __name__ == "__main__":
-    ledgeradd()
+    lm2ledger()

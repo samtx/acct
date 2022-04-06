@@ -15,6 +15,7 @@ setup(
         "console_scripts": [
             "acct=acct.cli:cli",
             "boa2ledger=acct.cli:boa2ledger",
+            "lm2ledger=acct.cli:lm2ledger",
         ]
     },
 )
