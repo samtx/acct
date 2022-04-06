@@ -9,7 +9,7 @@ import re
 from collections import defaultdict
 from enum import Enum
 from dataclasses import dataclass, field, fields
-from typing import List, NamedTuple, Optional, Iterable
+from typing import List, NamedTuple, Optional, Iterable, Union
 
 from pytest import Instance
 
@@ -161,8 +161,6 @@ class LedgerTransaction(LedgerItem):
         return hash(self.to_string())
 
     def validate_amounts(self):
-        """
-        """
         pass
 
     def to_string(self, indent=4):
@@ -243,28 +241,17 @@ class Ledger:
             elif isinstance(token, LedgerTagDirective):
                 self.tag_directives.append(token)
             elif isinstance(token, LedgerTransaction):
-                self.save_transaction(token)
+                self.insert(token)
 
-    def save_transaction(self, t: LedgerTransaction):
+    def insert(self, transactions: Union[LedgerTransaction, List[LedgerTransaction]]):
         """
         Save transaction by lunch money id
         """
-        _id = t.id
-        self.transactions[_id] = t
-        self.payees[t.payee].add(_id)
-        self.dates[t.date].add(_id)
-        for tag in t.tags:
-            if tag.value:
-                self.tagsv[tag.name][tag.value].add(_id)
-            else:
-                self.tags[tag.name].add(_id)
-        for post in t.posts:
-            self.accounts[post.account].add(_id)
-            for tag in post.tags:
-                if tag.value:
-                    self.tagsv[tag.name][tag.value].add(_id)
-                else:
-                    self.tags[tag.name].add(_id)
+        if not hasattr(transactions, '__iter__'):
+            transactions = (transactions, )
+        for t in transactions:
+            self.transactions[t.id] = t
+            self._build_transaction_index(t)
 
     def get_transactions_by_date(self, date_: datetime.date) -> List[LedgerTransaction]:
         t_ids = self.dates[date_]
@@ -283,28 +270,47 @@ class Ledger:
             return set()
         # check similar amounts
         similar_transactions = set()
-        amounts = {item.amount for item in t.items}
+        amounts = {post.amount for post in t.posts}
         for tx in t_subset:
-            for item in tx.items:
-                if item.amount in amounts:
+            for post in tx.posts:
+                if post.amount in amounts:
                     similar_transactions.add(tx)
                     break
         # check similar account types
-        account_types = {item.account.split(':', maxsplit=1)[0].lower() for item in t.items}
+        account_types = {post.account.split(':', maxsplit=1)[0].lower() for post in t.posts}
         for tx in similar_transactions:
-            for item in tx.items:
-                sim_account_type = item.account.split(':', maxsplit=1)[0].lower()
+            for post in tx.posts:
+                sim_account_type = post.account.split(':', maxsplit=1)[0].lower()
                 if sim_account_type in account_types:
                     similar_transactions.add(tx)
                 break
         return similar_transactions
 
-    def update(self, ledger_transactions: List[LedgerTransaction]):
+    def _build_transaction_index(self, t: LedgerTransaction):
+        _id = t.id
+        self.payees[t.payee].add(_id)
+        self.dates[t.date].add(_id)
+        for tag in t.tags:
+            if tag.value:
+                self.tagsv[tag.name][tag.value].add(_id)
+            else:
+                self.tags[tag.name].add(_id)
+        for post in t.posts:
+            self.accounts[post.account].add(_id)
+            for tag in post.tags:
+                if tag.value:
+                    self.tagsv[tag.name][tag.value].add(_id)
+                else:
+                    self.tags[tag.name].add(_id)
+
+    def update(self, transactions: Union[LedgerTransaction, List[LedgerTransaction]]):
         """
         Update Ledger object with new transactions based on lunch money ID
         """
-        for t in ledger_transactions:
-            self.transactions[t.lm_id] = t
+        if not hasattr(transactions, '__iter__'):
+            transactions = (transactions, )
+        for t in transactions:
+            self.transactions[t.id] = t
 
     def to_string(self, sorted=False):
         if not sorted:
