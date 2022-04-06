@@ -40,6 +40,12 @@ def test_parse_ledger_file(ledger_file):
     assert len(ledger.transactions) == 5
 
 
+def test_ledger_to_string(ledger_file):
+    ledger = Ledger(ledger_file)
+    ledger.parse()
+    ledger.to_string()
+
+
 def test_ledger_transaction_dates(ledger):
     assert datetime.date(2019, 8, 2) in ledger.dates
     assert datetime.date(2019, 5, 1) in ledger.dates

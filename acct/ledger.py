@@ -11,6 +11,8 @@ from enum import Enum
 from dataclasses import dataclass, field, fields
 from typing import List, NamedTuple, Optional, Iterable
 
+from pytest import Instance
+
 
 def datestr_to_date(datestr):
     """
@@ -51,7 +53,7 @@ class NewLine:
 
 
 @dataclass
-class TagDirective:
+class LedgerTagDirective:
     name: str
 
     def to_string(self):
@@ -70,10 +72,10 @@ class LedgerCommodity:
     options: Optional[List[LedgerCommodityOption]] = field(default_factory=list)
 
     def to_string(self, indent=4):
-        indent = ' ' * indent
+        indent_str = ' ' * indent
         strlist = [f'commodity {self.name}\n']
         for option in self.options:
-            strlist.append(f'{indent}{option.name} {option.value}\n')
+            strlist.append(f'{indent_str}{option.name} {option.value}\n')
         return "".join(strlist)
 
 
@@ -136,8 +138,10 @@ class LedgerTransactionPost(LedgerItem):
     commodity: str = 'USD'
 
     def to_string(self, indent=4, max_account_len=40):
-        indent = ' ' * indent
-        strlist = [f"\n{indent}{self.account:{max_account_len}s}    {self.amount:f} {self.commodity}"]
+        indent_str = ' ' * indent
+        strlist = [f"\n{indent_str}{self.account:{max_account_len}s}    "]
+        if self.amount is not None:
+            strlist.append(f"{self.amount:>16f} {self.commodity}")
         for note in self.notes:
             strlist.append(note.to_string(indent*2))
         for tag in self.tags:
@@ -163,7 +167,6 @@ class LedgerTransaction(LedgerItem):
 
     def to_string(self, indent=4):
         """Create string for writing to ledger file"""
-        indent = " " * indent
         strlist = [f'{self.date.strftime(r"%Y-%m-%d")} {self.status.value} {self.payee}']
         for note in self.notes:
             strlist.append(note.to_string(indent))
@@ -176,6 +179,7 @@ class LedgerTransaction(LedgerItem):
         # print posts in descending order of amount
         for post in sorted(self.posts, key=lambda x: -x.amount if x.amount is not None else 1e20):
             strlist.append(post.to_string(indent, max_account_len=max_account_len))
+        strlist.append('\n')
         return "".join(strlist)
 
 
@@ -204,6 +208,8 @@ class Ledger:
         self.fname = ledger_file
         self.tokens = []
         self.transactions = dict()
+        self.commodities = []
+        self.tag_directives = []
         self.accounts = defaultdict(set)
         self.payees = defaultdict(set)
         self.dates = defaultdict(set)
@@ -232,7 +238,11 @@ class Ledger:
         self.tokens = tokens
         # Save transactions
         for token in self.tokens:
-            if isinstance(token, LedgerTransaction):
+            if isinstance(token, LedgerCommodity):
+                self.commodities.append(token)
+            elif isinstance(token, LedgerTagDirective):
+                self.tag_directives.append(token)
+            elif isinstance(token, LedgerTransaction):
                 self.save_transaction(token)
 
     def save_transaction(self, t: LedgerTransaction):
@@ -296,17 +306,18 @@ class Ledger:
         for t in ledger_transactions:
             self.transactions[t.lm_id] = t
 
-    def to_string(self):
-        output_str = self.raw_header
+    def to_string(self, sorted=False):
+        if not sorted:
+            return "".join([t.to_string() for t in self.tokens])
+        # Sort Ledger file in order: commodities, tag directives, transactions
+        out = []
+        for commodity in self.commodities:
+            out.extend([commodity, NewLine()])
+        for tag_directive in self.tag_directives:
+            out.extend([tag_directive, NewLine()])
         for t in sorted(self.transactions.values(), key=lambda x: x.date):
-            # only use transaction attributes if it is tied to a Lunch Money ID
-            # otherwise just write the raw strings
-            if t.raw:
-                transaction_string = t.raw
-            else:
-                transaction_string = t.write()
-            output_str += transaction_string + "\n"
-        return output_str
+            out.extend([t, NewLine()])
+        return "".join([token.to_string() for token in out])
 
 
 class LedgerLexer:
@@ -355,7 +366,7 @@ class LedgerLexer:
                 # Tag directive
                 elif self.tag_directive_regex.match(line):
                     name = line[3:].strip()
-                    token = TagDirective(name)
+                    token = LedgerTagDirective(name)
                     tokens.append(token)
 
                 # Transaction
@@ -402,7 +413,7 @@ class LedgerLexer:
             "date": res.date,
             "payee": res.payee,
             "status": res.status,
-            "notes": [res.note],
+            "notes": [res.note] if res.note else [],
             "tags": [],
             "raw": "".join(group),
             "posts": [],
@@ -449,7 +460,7 @@ class LedgerLexer:
         elif matches := self.tag_without_value_regex.findall(comment):
             tags = self.parse_tag_without_values(matches)
         else:
-            notes.append(comment.strip())
+            notes.append(LedgerNote(comment.strip()))
         return notes, tags
 
     def parse_transaction_post(self, line, date):
@@ -475,7 +486,7 @@ class LedgerLexer:
         # find line item note
         m_note = re.search(r"^.*[" + self.comments + r"]\s*(.*)$", line)
         if m_note:
-            note = [m_note[1]]
+            note = [LedgerNote(m_note[1], newline=False)]
         else:
             note = []
         post = LedgerTransactionPost(account=account, amount=amount, notes=note, date=date)
@@ -493,11 +504,11 @@ class LedgerLexer:
             payee, note_with_comment_char = payee_and_note.split(m2[0])
             # remove leading comment character
             if m3 := re.search(r"["+ self.comments + r"]\s*(.*)", note_with_comment_char):
-                note = m3[1]
+                note = LedgerNote(m3[1], newline=False)
             else:
-                note = ""
+                note = None
         else:
-            payee, note = payee_and_note, ""
+            payee, note = payee_and_note, None
         date = datestr_to_date(datestr)
         if status_char == "*":
             status = LedgerStatus.CLEARED
@@ -505,7 +516,7 @@ class LedgerLexer:
             status = LedgerStatus.PENDING
         else:
             status = LedgerStatus.UNKNOWN
-        payee, note = payee.strip(), note.strip()
+        payee = payee.strip()
         res = FirstLineTransactionGroup(date=date, status=status, payee=payee, note=note)
         return res
 
