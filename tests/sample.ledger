@@ -1,0 +1,30 @@
+commodity $
+    note United States Dollars
+    format $1,000.00
+    nomarket
+    default
+
+2019/05/01 * Opening Balances
+    Assets:Checking Account                $0.00  ; Acct 1234
+    Equity:Sam                             $0.00
+    Liabilities:Credit Card                $0.00  ; 9876
+
+2019/07/10 * Initial Transfer           ; an extra comment
+    ; transfer from savings account
+    Equity:Sam                               $ -1000.00
+    Assets:Checking Account
+
+2019/08/02 * Austin Eastciders Barton Springs
+    ; dinner and drinks with friends
+    Liabilities:Credit Card                 $ -30.00  ; on Visa card
+    Expenses:Restaurants                    $  30.00
+
+2019/10/01 * Work paycheck
+    ; :tag1:tag2:
+    Assets:Checking Account                 $  1000.00
+    Income:Job                              $ -1000.00
+
+2019/10/15 * Credit card payment
+    ; tagkey: a super long tag value
+    Liabilities:Credit Card             $  30.00
+    Assets:Checking Account             $ -30.00
