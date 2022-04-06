@@ -7,8 +7,8 @@ import pytest
 from acct.ledger import (
     Ledger,
     LedgerTransaction,
-    LedgerTransactionTag,
-    LedgerTransactionItem
+    LedgerTag,
+    LedgerTransactionPost
 )
 
 

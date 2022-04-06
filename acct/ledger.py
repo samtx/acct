@@ -3,14 +3,13 @@ from __future__ import annotations
 
 import datetime
 import pathlib
+import uuid
+from decimal import Decimal
 import re
 from collections import defaultdict
-from dataclasses import dataclass, field
+from enum import Enum
+from dataclasses import dataclass, field, fields
 from typing import List, NamedTuple, Optional, Iterable
-
-from prompt_toolkit.history import History, InMemoryHistory
-from prompt_toolkit.auto_suggest import AutoSuggestFromHistory, AutoSuggest, Suggestion
-from prompt_toolkit.completion import Completer, Completion
 
 
 def datestr_to_date(datestr):
@@ -23,126 +22,161 @@ def datestr_to_date(datestr):
     return date
 
 
+"""
+Ledger Objects
+
+Journal
+    Account
+    Commodity
+    Payees
+    Metadata
+    Metadatawithvalue
+
+Item
+
+Transaction(Item)
+Post(Item)
+
+A transaction has at least two posts
+A transaction has a date, payee, status
+
+An item can have a note, or metadata, or metadatavalue
+
+"""
+
 @dataclass
-class LedgerTransactionItem:
-    account: str
-    amount: Optional[float]
-    note: str = ''
+class NewLine:
+    def to_string(self):
+        return '\n'
 
 
 @dataclass
-class LedgerTransactionTag:
+class TagDirective:
+    name: str
+
+    def to_string(self):
+        return f"tag {self.name}\n"
+
+
+@dataclass
+class LedgerCommodityOption:
     name: str
     value: str = ''
 
-    def write(self):
-        return f":{self.name}:"
 
-    def write_item(self):
-        return f"{self.name}: {self.value}"
+@dataclass
+class LedgerCommodity:
+    name: str
+    options: Optional[List[LedgerCommodityOption]] = field(default_factory=list)
+
+    def to_string(self, indent=4):
+        indent = ' ' * indent
+        strlist = [f'commodity {self.name}\n']
+        for option in self.options:
+            strlist.append(f'{indent}{option.name} {option.value}\n')
+        return "".join(strlist)
+
+
+class LedgerStatus(str, Enum):
+    CLEARED = "*"
+    PENDING = "!"
+    UNKNOWN = ""
 
 
 @dataclass
-class LedgerTransaction:
+class LedgerComment:
+    value: str
+    date: datetime.date = None
+
+
+@dataclass
+class LedgerNote:
+    value: str
+    newline: bool = True   # this note is printed on a new line
+    comment: str = ';'  # comment character
+
+    def to_string(self, indent=4):
+        indent = ' ' * indent
+        if self.newline:
+            prefix = f"\n{indent}{self.comment} "
+        else:
+            prefix = f"  {self.comment} "
+        return prefix + self.value
+
+
+@dataclass
+class LedgerTag:
+    name: str
+    value: str = ''
+    newline: bool = True  # this tag is printed on a new line
+    comment: str = ';'  # comment character
+
+    def to_string(self, indent=4):
+        indent = ' ' * indent
+        if self.newline:
+            prefix = f"\n{indent}{self.comment} "
+        else:
+            prefix = f"  {self.comment} "
+        if self.value:
+            return prefix + f"{self.name}: {self.value}"
+        return prefix + f":{self.name}:"
+
+
+@dataclass
+class LedgerItem:
     date: datetime.date
-    payee: str
-    items: List[LedgerTransactionItem] = field(default_factory=list)
-    raw: str = ""  # raw strings from ledger file
-    status: str = ""
-    note: str = ""
-    tags: Optional[List[LedgerTransactionTag]] = field(default_factory=list)
-    lm_id: Optional[int] = None
+    notes: List[LedgerNote] = field(default_factory=list)
+    tags: List[LedgerTag] = field(default_factory=list)
+
+
+@dataclass
+class LedgerTransactionPost(LedgerItem):
+    account: str = ''
+    amount: Optional[Decimal] = None
+    commodity: str = 'USD'
+
+    def to_string(self, indent=4, max_account_len=40):
+        indent = ' ' * indent
+        strlist = [f"\n{indent}{self.account:{max_account_len}s}    {self.amount:f} {self.commodity}"]
+        for note in self.notes:
+            strlist.append(note.to_string(indent*2))
+        for tag in self.tags:
+            strlist.append(tag.to_string(indent*2))
+        return "".join(strlist)
+
+
+@dataclass
+class LedgerTransaction(LedgerItem):
+    payee: str = ''
+    posts: List[LedgerTransactionPost] = field(default_factory=list)
+    raw: str = ''  # raw strings from ledger file
+    status: LedgerStatus = LedgerStatus.UNKNOWN
     id: str = ''
 
     def __hash__(self):
-        return hash(self.write())
+        return hash(self.to_string())
 
     def validate_amounts(self):
         """
         """
         pass
 
-    def status_char(self):
-        if self.status == "cleared":
-            ch = "*"
-        elif self.status == "pending":
-            ch = "!"
-        else:
-            ch = ""
-        return ch
-
-    def write(self):
+    def to_string(self, indent=4):
         """Create string for writing to ledger file"""
-        indent = " " * 4
-        lines = f'{self.date.strftime(r"%Y/%m/%d")} {self.status_char()} {self.payee}\n'
-        # write note
-        if self.note:
-            if hasattr(self.note, "__len__"):
-                for note_line in self.note.splitlines():
-                    lines += f"{indent}; {note_line}\n"
-            else:
-                lines += f"{indent}; {self.note}\n"
-        # write tags
-        if len(self.tags) > 0:
-            tags_no_value = []
-            tags_with_value = []
-            for tag in self.tags:
-                if tag.value:
-                    tags_with_value.append(f"{tag.name}: {tag.value}")
-                else:
-                    tags_no_value.append(f":{tag.name}:")
-            if len(tags_no_value) > 0:
-                lines += f"{indent}; " + ", ".join(tags_no_value) + "\n"
-            for tag in tags_with_value:
-                lines += f"{indent}; " + tag + "\n"
-
-        # write lunchmoney id
-        if self.lm_id:
-            lines += f"{indent}; lm_id: {self.lm_id}\n"
-
-        # write items
-        for item in sorted(self.items, key=lambda x: -x.amount if x.amount is not None else 1e20):
-            if item.amount:
-                account_string = f"{indent}{item.account:40}  $ {item.amount:>8.2f}\n"
-            else:
-                account_string = f"{indent}{item.account:40}  {' ':>10s}\n"
-            if item.note:
-                account_string += f" ; {item.note}"
-            lines += account_string
-        lines = lines.rstrip()
-        return lines
-
-
-class LedgerAccountCompleter(Completer):
-    """
-    autocompleter for prompt_toolkit
-    """
-    def __init__(self, ledger: Ledger):
-        self.ledger = ledger
-
-    def get_completions(self, document, complete_event) -> Iterable[Completion]:
-        current_str = document.get_word_before_cursor().lower()
-        for account in self.ledger.accounts.keys():
-            if account.lower().startswith(current_str):
-                yield Completion(account, start_position=-len(current_str))
-
-
-class LedgerPayeeAutoSuggest(AutoSuggest):
-    """
-    autosuggester for payees
-    """
-    def __init__(self, ledger):
-        self.ledger = ledger
-
-    def get_suggestion(self, buffer, document):
-        # Consider only the last line for the suggestion.
-        text = document.text.rsplit("\n", 1)[-1]
-        payees = list(self.ledger.payees.keys())
-        # Find first matching line in history.
-        for payee_str in reversed(payees):
-            if payee_str.startswith(text):
-                return Suggestion(payee_str[len(text) :])
-        return None
+        indent = " " * indent
+        strlist = [f'{self.date.strftime(r"%Y-%m-%d")} {self.status.value} {self.payee}']
+        for note in self.notes:
+            strlist.append(note.to_string(indent))
+        for tag in self.tags:
+            strlist.append(tag.to_string(indent))
+        # Get maximum account name length
+        max_account_len = 0
+        for post in self.posts:
+            max_account_len = max(max_account_len, len(post.account))
+        # print posts in descending order of amount
+        for post in sorted(self.posts, key=lambda x: -x.amount if x.amount is not None else 1e20):
+            strlist.append(post.to_string(indent, max_account_len=max_account_len))
+        return "".join(strlist)
 
 
 class FirstLineTransactionGroup(NamedTuple):
@@ -168,26 +202,18 @@ class Ledger:
 
     def __init__(self, ledger_file):
         self.fname = ledger_file
+        self.tokens = []
         self.transactions = dict()
         self.accounts = defaultdict(set)
         self.payees = defaultdict(set)
         self.dates = defaultdict(set)
+        self.tags = defaultdict(set)
+        self.tagsv = defaultdict(lambda: defaultdict(set))
+
         self.line_groups = []
         self.raw = ""
         self.raw_header = ""
-        self.transactions = {}  # store by lunch money id
         self.counter = 0
-        self.account_completer = None
-        self.payee_suggestor = None
-        self.prompt_history = None
-
-    def set_prompt_helpers(self):
-        """
-        Create Completer, Suggestor, and History objects for prompt_toolkit
-        """
-        self.account_completer = LedgerAccountCompleter(self)
-        self.payee_suggestor = LedgerPayeeAutoSuggest(self)
-        self.prompt_history = InMemoryHistory()
 
     def incr(self):
         self.counter += 1
@@ -199,57 +225,36 @@ class Ledger:
         """
         if not pathlib.Path(self.fname).exists():
             print(f"Ledger file '{self.fname}' does not exist.")
-            return None
-        self._gather_transactions()
-        for t_group in self.line_groups:
-            t = self._process_transaction(t_group)
-            self.save_transaction(t)
+            raise FileNotFoundError
 
-    def _gather_transactions(self):
-        """
-        Read ledger file and gather transactions as line groups
-        """
-        first_transaction = False
-        with open(self.fname, "r") as f:
-            while True:
-                line = f.readline()
-                self.raw += line
-                txn_group = []
-                if self.transaction_regex.match(line):
-                    first_transaction = True
-                    txn_group.append(line)
-                    # iterate over the next group of lines until a blank line is encountered
-                    line = f.readline()
-                    self.raw += line
-                    while line.rstrip():
-                        txn_group.append(line)
-                        line = f.readline()
-                        self.raw += line
-                    self.line_groups.append(txn_group)
-                elif not first_transaction:
-                    header_lines = self.raw_header.splitlines()
-                    if (
-                        (len(header_lines) > 0)
-                        and (not header_lines[-1].strip())
-                        and (not line.strip())
-                    ):
-                        continue
-                    else:
-                        self.raw_header += line
-                elif not line:
-                    break
+        lexer = LedgerLexer(self.fname)
+        tokens = lexer.tokenize()
+        self.tokens = tokens
+        # Save transactions
+        for token in self.tokens:
+            if isinstance(token, LedgerTransaction):
+                self.save_transaction(token)
 
     def save_transaction(self, t: LedgerTransaction):
         """
         Save transaction by lunch money id
         """
-        _id = t.lm_id if t.lm_id else f"ledger-{self.incr()}"
-        t.id = _id
+        _id = t.id
         self.transactions[_id] = t
         self.payees[t.payee].add(_id)
         self.dates[t.date].add(_id)
-        for item in t.items:
-            self.accounts[item.account].add(_id)
+        for tag in t.tags:
+            if tag.value:
+                self.tagsv[tag.name][tag.value].add(_id)
+            else:
+                self.tags[tag.name].add(_id)
+        for post in t.posts:
+            self.accounts[post.account].add(_id)
+            for tag in post.tags:
+                if tag.value:
+                    self.tagsv[tag.name][tag.value].add(_id)
+                else:
+                    self.tags[tag.name].add(_id)
 
     def get_transactions_by_date(self, date_: datetime.date) -> List[LedgerTransaction]:
         t_ids = self.dates[date_]
@@ -291,7 +296,7 @@ class Ledger:
         for t in ledger_transactions:
             self.transactions[t.lm_id] = t
 
-    def write(self):
+    def to_string(self):
         output_str = self.raw_header
         for t in sorted(self.transactions.values(), key=lambda x: x.date):
             # only use transaction attributes if it is tied to a Lunch Money ID
@@ -303,51 +308,182 @@ class Ledger:
             output_str += transaction_string + "\n"
         return output_str
 
-    def _process_transaction(self, txn_lines):
+
+class LedgerLexer:
+    comments = ";#%|"
+    comments_regex = re.compile(r"\s*[;#%|\*]")
+    item_comment_regex = re.compile(r"^\s+[" + comments + r"]+(.*)$")
+    commodity_regex = re.compile(r"^(commodity\s)|(c\s)", flags=re.I)
+    tag_directive_regex = re.compile(r"^tag\s", flags=re.I)
+    tag_without_value_regex = re.compile(r":[\w:]+:")
+    tag_with_value_regex = re.compile(r"^\s+\w+:[^:]*$")
+    transaction_first_line_regex = re.compile(r"^(\d{4}[-\/]\d{2}[-\/]\d{2})\s+([*! ])?(.*)$")
+    payee_and_note_regex = re.compile(r"^(.*)(( {2,}|\t|\n|\r\n)([" + comments + r"])(.*))?$")
+    post_acount_regex = re.compile(r"^\s*([a-zA-Z0-9:& .]+)( {2,}|\t|\n|\r\n)\s*")
+    post_amount_regex = re.compile(r"^\$?\s*([-+]?[\d+\.,]*)")
+
+    def __init__(self, fname):
+        self.fname = fname
+        self.pos = 0
+        self.line = 0
+        self.file_handler = None
+
+    def next(self):
+        line = next(self.file_handler)
+        self.pos += 1
+        return line
+
+    def tokenize(self):
+        tokens = []
+        with open(self.fname) as f:
+            while f:
+                try:
+                    line = next(f)
+                except StopIteration:
+                    break
+                # Match the type of token
+
+                # Commodity
+                if self.commodity_regex.match(line):
+                    group = [line]
+                    while line := next(f).rstrip():
+                        group.append(line)
+                    token = self.parse_commodity(group)
+                    tokens.append(token)
+                    tokens.append(NewLine())
+
+                # Tag directive
+                elif self.tag_directive_regex.match(line):
+                    name = line[3:].strip()
+                    token = TagDirective(name)
+                    tokens.append(token)
+
+                # Transaction
+                elif self.transaction_first_line_regex.match(line):
+                    group = [line]
+                    while line := next(f, ""):
+                        if not line.strip():
+                            break
+                        group.append(line)
+                    token = self.parse_transaction(group)
+                    tokens.append(token)
+                    tokens.append(NewLine())
+
+                # New line
+                elif not line.rstrip():
+                    token = NewLine()
+                    tokens.append(token)
+
+                else:
+                    raise Exception(f'Parsing error: {line}')
+        return tokens
+
+
+    def parse_commodity(self, group):
         """
-        Process transaction from group of lines
+        Parse commodity directive
+        """
+        name = group[0].split()[1].strip()
+        commodity = LedgerCommodity(name)
+        for line in group[1:]:
+            key, *values = (x.strip() for x in line.split())
+            value = " ".join(values)
+            option = LedgerCommodityOption(name=key, value=value)
+            commodity.options.append(option)
+        return commodity
+
+    def parse_transaction(self, group):
+        """
+        Parse transaction from group of lines
         """
         # process first line
-        res = self._parse_first_line_of_transaction_group(txn_lines[0])
-        txn_data = {
+        res = self.parse_first_line_of_transaction(group[0])
+        tx_data = {
             "date": res.date,
             "payee": res.payee,
             "status": res.status,
-            "note": res.note,
+            "notes": [res.note],
             "tags": [],
-            "raw": "".join(txn_lines),
+            "raw": "".join(group),
+            "posts": [],
+            "id": str(uuid.uuid4()),
         }
         # get transaction items
-        txn_items = []
-        for line in txn_lines[1:]:
-            result = re.search(r"^\s+[" + self.comments + r"]\s*(.*)$", line)
-            if (result) and (len(result.regs) >= 2):
-                # process comments
+        remaining_lines = iter(group[1:])
+        # parse transaction notes and tags
+        while line := next(remaining_lines, ""):
+            if result := self.item_comment_regex.match(line):
                 comment = result[1]
-                if matches := self.tag_with_value_regex.findall(comment):
-                    tag = self._parse_tag_with_values(matches)
-                    txn_data['tags'].extend([tag])
-                elif matches := self.tag_without_value_regex.findall(comment):
-                    tags = self._parse_tag_without_values(matches)
-                    txn_data['tags'].extend(tags)
-                elif lm_id := re.search(r"(?<=[lm|LM|Lm]:)\s*\d+", comment):
-                    tag = LedgerTransactionTag(name='lm_id', value=int(lm_id[0]))
-                    txn_data['tags'].extend([tag])
-                else:
-                    txn_data['note'] += '\n' + comment.strip()
+                notes, tags = self.parse_item_comment(comment)
+                tx_data["notes"].extend(notes)
+                tx_data["tags"].extend(tags)
             else:
-                # process line item
-                txn_item = self._process_transaction_item(line)
-                txn_items.append(txn_item)
-        txn_data.update({"items": txn_items})
-        txn = LedgerTransaction(**txn_data)
-        if len(txn_items) <= 1:
-            raise Exception(f"Less than two item entries for ledger transaction: {txn}")
-        return txn
+                break
 
-    def _parse_first_line_of_transaction_group(self, line: str) -> FirstLineTransactionGroup:
+        # get transaction posts
+        post = self.parse_transaction_post(line, tx_data['date'])
+        while line := next(remaining_lines, ""):
+            if result := self.item_comment_regex.match(line):
+                # get post notes and tags
+                comment = result[1]
+                notes, tags = self.parse_item_comment(comment)
+                post.notes.extend(notes)
+                post.tags.extend(tags)
+            else:
+                tx_data["posts"].append(post)
+                post = self.parse_transaction_post(line, tx_data['date'])
+        tx_data["posts"].append(post)
+        tx = LedgerTransaction(**tx_data)
+        if len(tx.posts) <= 1:
+            raise Exception(f"Less than two post entries for ledger transaction: {tx}")
+        return tx
+
+    def parse_item_comment(self, comment):
         """
-        process first line
+        Parses comment line for note or tags
+        """
+        notes, tags = [], []
+        if matches := self.tag_with_value_regex.findall(comment):
+            tag = self.parse_tag_with_values(matches)
+            tags.extend([tag])
+        elif matches := self.tag_without_value_regex.findall(comment):
+            tags = self.parse_tag_without_values(matches)
+        else:
+            notes.append(comment.strip())
+        return notes, tags
+
+    def parse_transaction_post(self, line, date):
+        """
+        (indented)  Expenses:Food:Alcohol & Bars        $  388.19
+        (indented)  Liabilities:Chase Sapphire Visa     $ -388.19
+        """
+        # split accounts and amounts on double space and tabs
+        m = self.post_acount_regex.match(line)
+        account = m[1].rstrip()
+        # add some currency string validation later.
+        # m_amount = re.search(r"")
+        # amount_string = re
+        # # For now, just remove commas and convert to Decimal
+        # amount_string = line_item[m.].replace(m[1],'')
+        amount_string = line.replace(m[0],'').strip()
+        m_amount = self.post_amount_regex.match(amount_string)
+        if len(amount_string) > 0 and m_amount:
+            amount_string = m_amount[1].replace(',','')
+            amount = Decimal(amount_string)
+        else:
+            amount = None
+        # find line item note
+        m_note = re.search(r"^.*[" + self.comments + r"]\s*(.*)$", line)
+        if m_note:
+            note = [m_note[1]]
+        else:
+            note = []
+        post = LedgerTransactionPost(account=account, amount=amount, notes=note, date=date)
+        return post
+
+    def parse_first_line_of_transaction(self, line: str) -> FirstLineTransactionGroup:
+        """
+        Parse first line of transaction
         """
         m = self.transaction_first_line_regex.search(line)
         datestr, status_char, payee_and_note = m[1], m[2], m[3].strip()
@@ -362,19 +498,18 @@ class Ledger:
                 note = ""
         else:
             payee, note = payee_and_note, ""
-
         date = datestr_to_date(datestr)
         if status_char == "*":
-            status = "cleared"
+            status = LedgerStatus.CLEARED
         elif status_char == "!":
-            status = "pending"
+            status = LedgerStatus.PENDING
         else:
-            status = ""
+            status = LedgerStatus.UNKNOWN
         payee, note = payee.strip(), note.strip()
         res = FirstLineTransactionGroup(date=date, status=status, payee=payee, note=note)
         return res
 
-    def _parse_tag_without_values(self, matches: re.Match) -> List[LedgerTransactionTag]:
+    def parse_tag_without_values(self, matches: re.Match) -> List[LedgerTag]:
         """
         check to see if tag comment matches
         ; :tag1:tag2:tag3:
@@ -382,10 +517,10 @@ class Ledger:
         tags = []
         for match in matches:
             match_tags = match.strip(':').split(':')
-            tags.extend([LedgerTransactionTag(name=tag) for tag in match_tags])
+            tags.extend([LedgerTag(name=tag) for tag in match_tags])
         return tags
 
-    def _parse_tag_with_values(self, matches: re.Match) -> LedgerTransactionTag:
+    def parse_tag_with_values(self, matches: re.Match) -> LedgerTag:
         """
         check to see if tag comment matches
         ;  tagname: tagvalue
@@ -394,33 +529,5 @@ class Ledger:
         if len(tag_items) != 2:
             raise Exception('Tag parsing for tag \'{tag_string}\' failed')
         tag_name, tag_value = (item.strip() for item in tag_items)
-        return LedgerTransactionTag(name=tag_name, value=tag_value)
+        return LedgerTag(name=tag_name, value=tag_value)
 
-    def _process_transaction_item(self, line_item):
-        """
-        (indented)  Expenses:Food:Alcohol & Bars        $  388.19
-        (indented)  Liabilities:Chase Sapphire Visa     $ -388.19
-        """
-        # split accounts and amounts on double space and tabs
-        m = re.search(r"^\s*([a-zA-Z0-9:& .]+)( {2,}|\t|\n|\r\n)\s*", line_item)
-        account = m[1].rstrip()
-        # add some currency string validation later.
-        # m_amount = re.search(r"")
-        # amount_string = re
-        # # For now, just remove commas and convert to float
-        # amount_string = line_item[m.].replace(m[1],'')
-        amount_string = line_item.replace(m[0],'').strip()
-        m_amount = re.search(r"^\$?\s*([-+]?[\d+\.,]*)", amount_string)
-        if len(amount_string) > 0 and m_amount:
-            amount_string = m_amount[1].replace(',','')
-            amount = float(amount_string)
-        else:
-            amount = None
-        # find line item note
-        m_note = re.search(r"^.*[" + self.comments + r"]\s*(.*)$", line_item)
-        if m_note:
-            note = m_note[1]
-        else:
-            note = None
-        txn_item = LedgerTransactionItem(account=account, amount=amount, note=note)
-        return txn_item

@@ -9,8 +9,8 @@ from typing import List, Optional, Union
 import httpx
 from pydantic import BaseModel, Field
 
-from acct.ledger import (LedgerTransaction, LedgerTransactionItem,
-                         LedgerTransactionTag)
+# from acct.ledger import (LedgerTransaction, LedgerTransactionItem,
+#                          LedgerTransactionTag)
 
 
 class LunchMoneyTag(BaseModel):
