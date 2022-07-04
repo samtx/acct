@@ -3,8 +3,9 @@ from __future__ import annotations
 
 import asyncio
 import datetime
+from decimal import Decimal
 import re
-from typing import List, Optional, Union
+from typing import List, Optional, Union, Dict
 
 import httpx
 from pydantic import BaseModel, Field
@@ -63,7 +64,7 @@ class LunchMoneyPlaidAccount(BaseModel):
 class LunchMoneyTransactionBase(BaseModel):
     date: datetime.date
     payee: str
-    amount: float
+    amount: Decimal
     status: str = "uncleared"
     is_group: bool = False
     currency: str = "usd"
@@ -80,6 +81,14 @@ class LunchMoneyTransaction(LunchMoneyTransactionBase):
     category: LunchMoneyCategory = None
     asset: Optional[LunchMoneyAsset] = None
     plaid_account: Optional[LunchMoneyPlaidAccount] = None
+
+    @property
+    def account(self):
+        """ Return either the plaid account or asset account """
+        if self.plaid_account:
+            return self.plaid_account
+        else:
+            return self.asset
 
 
 class LunchMoneyTransactionInsert(LunchMoneyTransactionBase):
@@ -107,7 +116,17 @@ class LunchMoney:
         self.plaid_accounts = {}
         self.transactions = []
 
-    def get_transactions(self, params):
+    def get_transactions(
+        self, 
+        params: Optional[Dict] = None,
+        start: Optional[datetime.date] = None,
+        end: Optional[datetime.date] = None, 
+    ):
+        if not params:
+            params = {
+                'start_date': start.strftime("%Y-%m-%d"),
+                'end_date': end.strftime("%Y-%m-%d"),
+            }
         results = self.fetch_lunch_money_data(params)
         self.categories = self.json_to_model(LunchMoneyCategory, results[0])
         self.assets = self.json_to_model(LunchMoneyAsset, results[1])
@@ -127,7 +146,7 @@ class LunchMoney:
         transactions[:] = [t for t in transactions if not t["is_group"]]
         for t in transactions:
             t["date"] = datetime.date.fromisoformat(t["date"])
-            t["amount"] = float(t["amount"])
+            t["amount"] = Decimal(t["amount"])
             if category_id := t.get("category_id"):
                 t["category"] = self.categories[category_id]
             else:
