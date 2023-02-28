@@ -4,13 +4,18 @@ from __future__ import annotations
 import asyncio
 import datetime
 import re
-from typing import List, Optional, Union
+from typing import List, Optional, Union, Dict, Any, AsyncGenerator
+from datetime import date, datetime, timedelta
+from decimal import Decimal
 
 import httpx
 from pydantic import BaseModel, Field
 
-from acct.ledger import (LedgerTransaction, LedgerTransactionItem,
-                         LedgerTransactionTag)
+from acct.ledger import (
+    LedgerTransaction,
+    LedgerTransactionItem,
+    LedgerTransactionTag,
+)
 
 
 class LunchMoneyTag(BaseModel):
@@ -25,8 +30,8 @@ class LunchMoneyCategory(BaseModel):
     is_income: bool
     exclude_from_budget: bool
     exclude_from_totals: bool
-    updated_at: str
-    created_at: str
+    updated_at: datetime
+    created_at: datetime
     is_group: bool
     description: Optional[str] = ""
     group_id: Optional[int] = None
@@ -37,31 +42,31 @@ class LunchMoneyAsset(BaseModel):
     type_name: str
     name: str
     balance: str
-    balance_as_of: str
+    balance_as_of: datetime
     currency: str
-    created_at: str
+    created_at: datetime
     subtype_name: Optional[str] = ""
     institution_name: Optional[str] = ""
 
 
 class LunchMoneyPlaidAccount(BaseModel):
     id: int
-    date_linked: str
+    date_linked: datetime
     name: str
     type: str
     subtype: str
     mask: str
     institution_name: str
     status: str
-    last_import: str
+    last_import: datetime
     balance: str
     currency: str
-    balance_last_update: str
+    balance_last_update: datetime
     limit: Optional[int] = None
 
 
 class LunchMoneyTransactionBase(BaseModel):
-    date: datetime.date
+    date: date
     payee: str
     amount: float
     status: str = "uncleared"
@@ -80,6 +85,9 @@ class LunchMoneyTransaction(LunchMoneyTransactionBase):
     category: LunchMoneyCategory = None
     asset: Optional[LunchMoneyAsset] = None
     plaid_account: Optional[LunchMoneyPlaidAccount] = None
+
+    class Config:
+        extra = 'allow'
 
 
 class LunchMoneyTransactionInsert(LunchMoneyTransactionBase):
@@ -106,6 +114,42 @@ class LunchMoney:
         self.assets = {}
         self.plaid_accounts = {}
         self.transactions = []
+
+
+    @property
+    def uncategorized_category(self) -> LunchMoneyCategory:
+        """ Get category for an uncategorized Lunchmoney transaction """
+        uncategorized = LunchMoneyCategory(
+            id=-1,
+            name="Uncategorized",
+            is_income=False,
+            exclude_from_budget=False,
+            exclude_from_totals=False,
+            updated_at=datetime.date.today().isoformat(),
+            created_at=datetime.date.today().isoformat(),
+            is_group=False,
+        )
+        return uncategorized
+
+
+    async def load_foreign_key_objects(self):
+        """ Query LunchMoneyAPI to get categories, assets, and plaid_accounts """
+        async def fetch_resource(client: httpx.AsyncClient, endpoint: str) -> List[Dict, Any]:
+            response = await client.get(endpoint)
+            data = response.json()[endpoint]
+            return data
+
+        async with httpx.AsyncClient(base_url=self.base_url, headers=self.headers, http2=True) as client:
+            results = await asyncio.gather(
+                fetch_resource(client, 'categories'),
+                fetch_resource(client, 'assets'),
+                fetch_resource(client, 'plaid_accounts'),
+            )
+
+        self.categories = self.json_to_model(LunchMoneyCategory, results[0])
+        self.assets = self.json_to_model(LunchMoneyAsset, results[1])
+        self.plaid_accounts = self.json_to_model(LunchMoneyPlaidAccount, results[2])
+
 
     def get_transactions(self, params):
         results = self.fetch_lunch_money_data(params)
@@ -149,6 +193,40 @@ class LunchMoney:
 
         lm_transactions = [LunchMoneyTransaction(**t) for t in transactions]
         self.transactions = lm_transactions
+
+
+    def parse_lunchmoney_response(self, data: Dict[str, Any]) -> LunchMoneyTransaction:
+        """ Parse json response to LunchMoneyTransaction object """
+        data["date"] = datetime.date.fromisoformat(data["date"])
+        data["amount"] = Decimal(data["amount"])
+        data["category"] = self.categories[data['category_id']] if 'category_id' in data else self.uncategorized_category
+        data["tags"] = [LunchMoneyTag(**tag) for tag in data["tags"]] if 'tags' in data else []
+        data["asset"] = self.assets[data['asset_id']] if 'asset_id' in data else None
+        data["plaid_account"] = self.plaid_accounts[data['plaid_account_id']] if 'plaid_account_id' in data else None
+        lm_transaction = LunchMoneyTransaction(**data)
+        return lm_transaction
+
+
+    async def iter_transactions(self, start: date, end: date, *, limit: int = 100) -> AsyncGenerator[LunchMoneyTransaction, None, None]:
+        """ Query LunchMoney API and yield an AsyncGenerator of LunchMoneyTransaction objects """
+        params = {
+            'start_date': start.isoformat(),
+            'end_date': end.isoformat(),
+            'is_group': False,   # Ignore transaction groups
+        }
+        offset = 0
+        while True:
+            params.update(limit=limit, offset=offset)
+            async with httpx.AsyncClient(base_url=self.base_url, headers=self.headers) as client:
+                response = await client.get('transactions', params=params)
+            data = response.json()['transactions']
+            for t_data in data:
+                lm_txn = self.parse_lunchmoney_response(t_data)
+                yield lm_txn
+            if len(data) < limit:
+                break
+            offset += limit
+
 
     def json_to_model(self, model, data_list):
         data = [model(**x) for x in data_list]
